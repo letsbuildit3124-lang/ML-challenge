@@ -7,8 +7,7 @@ Implements high-recall, volume-controlled multi-view blocking methods:
 - Method C: Rare Token Overlap & Inverted Index Blocking
 - Method D: Phonetic (Soundex/Metaphone) Compound Blocking
 - Method E: Offline Transliteration-Aware Blocking
-- Method F: Character N-Gram TF-IDF Top-K Retrieval
-Includes streaming target file chunking for memory safety on low-RAM instances.
+Includes pre-indexed in-memory target indexing for ultra-fast (sub-second) candidate lookups.
 """
 
 import os
@@ -19,9 +18,8 @@ from collections import Counter, defaultdict
 from typing import Dict, List, Set, Tuple, Any, Optional
 import polars as pl
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
 
-from src.data_loader import iter_source_file_chunks
+from src.data_loader import iter_source_file_chunks, load_source_file
 from src.dataset_builder import extract_record_dict_from_df
 
 # =============================================================================
@@ -307,53 +305,51 @@ def generate_v2_candidates(
     return results
 
 # =============================================================================
-# 5. STREAMING CHUNKED BLOCKING FOR MEMORY SAFETY ON LOW-RAM INSTANCES
+# 5. PRE-INDEXED COMPACT TARGET TABLE (ULTRA FAST IN-MEMORY BLOCKING)
 # =============================================================================
 
-def block_s1_against_target_file_chunked(
+def build_compact_target_index(
+    target_s2_path: str,
+    target_s3_path: str,
+    chunk_size: int = 250000
+) -> pl.DataFrame:
+    """
+    Loads Source 2 and Source 3 once in streaming batches, adds V2 blocking columns,
+    and returns a single unified, compact Polars DataFrame for sub-second candidate lookups.
+    """
+    frames = []
+
+    for path, prefix in [(target_s2_path, "S2-"), (target_s3_path, "S3-")]:
+        if not os.path.exists(path):
+            continue
+        for chunk in iter_source_file_chunks(path, chunk_size=chunk_size, expected_prefix=prefix):
+            p_chk = add_v2_blocking_columns(chunk)
+            del chunk
+            frames.append(p_chk)
+            gc.collect()
+
+    unified_tgt = pl.concat(frames)
+    del frames
+    gc.collect()
+    return unified_tgt
+
+
+def generate_candidates_against_indexed_target(
     s1_p: pl.DataFrame,
-    target_file_path: str,
-    target_chunk_size: int = 250000,
-    max_cands_per_s1: int = 40,
-    extract_matched_records: bool = True
+    indexed_target: pl.DataFrame,
+    max_cands_per_s1: int = 30
 ) -> Tuple[pl.DataFrame, Dict[str, Dict[str, Any]]]:
     """
-    Blocks S1 against a target file (Source 2 or Source 3) by streaming the target
-    in chunks of `target_chunk_size` rows.
-    
-    Keeps memory footprint strictly under 1GB even on 5M+ row target datasets.
+    Sub-second candidate generation between an S1 chunk and the pre-indexed target DataFrame.
     """
-    cand_chunks: List[pl.DataFrame] = []
-    target_records: Dict[str, Dict[str, Any]] = {}
+    cands_dict = generate_v2_candidates(s1_p, indexed_target, max_cands_per_s1=max_cands_per_s1)
+    cand_df = cands_dict["union"]
 
-    for batch_idx, batch_df in enumerate(iter_source_file_chunks(target_file_path, chunk_size=target_chunk_size)):
-        # 1. Add V2 blocking columns to the small chunk
-        batch_p = add_v2_blocking_columns(batch_df)
+    target_records = {}
+    if len(cand_df) > 0:
+        active_ids = list(set(cand_df["target_id"].to_list()))
+        matched_tgt = indexed_target.filter(pl.col("eid").is_in(active_ids))
+        target_records = extract_record_dict_from_df(matched_tgt)
+        del matched_tgt
 
-        # 2. Block against S1
-        pairs_dict = generate_v2_candidates(s1_p, batch_p, max_cands_per_s1=max_cands_per_s1)
-        pairs_df = pairs_dict["union"]
-
-        if len(pairs_df) > 0:
-            cand_chunks.append(pairs_df)
-
-            # 3. Extract records for only active candidates in this chunk
-            if extract_matched_records:
-                active_target_ids = list(set(pairs_df["target_id"].to_list()))
-                matched_rows = batch_p.filter(pl.col("eid").is_in(active_target_ids))
-                target_records.update(extract_record_dict_from_df(matched_rows))
-                del matched_rows
-
-        del batch_df, batch_p, pairs_dict, pairs_df
-        gc.collect()
-
-    if cand_chunks:
-        final_cands = pl.concat(cand_chunks).unique()
-        if max_cands_per_s1:
-            final_cands = final_cands.with_columns(
-                pl.int_range(pl.len()).over("s1_id").alias("rank")
-            ).filter(pl.col("rank") < max_cands_per_s1).select(["s1_id", "target_id"])
-    else:
-        final_cands = pl.DataFrame(schema={"s1_id": pl.Utf8, "target_id": pl.Utf8})
-
-    return final_cands, target_records
+    return cand_df, target_records

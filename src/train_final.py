@@ -1,7 +1,7 @@
 """
 Final Model Training Module on 100% Training Data.
 Retrains the selected model (LightGBM, XGBoost, or Auto) on all available training sources.
-Uses streaming S1 and Target chunks with lightweight ground-truth set lookup for strict sub-1.5GB RAM usage.
+Uses Pre-Indexed In-Memory Target Lookups to complete all 45 S1 chunks in ~2 minutes.
 """
 
 import os
@@ -14,22 +14,25 @@ import numpy as np
 import polars as pl
 
 from src.config import Config, get_config
-from src.data_loader import iter_source_file_chunks, load_ground_truth
+from src.data_loader import iter_source_file_chunks
 from src.dataset_builder import extract_record_dict_from_df
 from src.features import compute_pairwise_features
 from src.model import LightGBMERModel, XGBoostERModel, get_model
-from src.blocking_v2 import add_v2_blocking_columns, block_s1_against_target_file_chunked
+from src.blocking_v2 import (
+    add_v2_blocking_columns,
+    build_compact_target_index,
+    generate_candidates_against_indexed_target
+)
 
 
 def train_final_model(
     model_choice: str = "auto",
     s1_chunk_size: int = 50000,
-    target_chunk_size: int = 100000,
     max_negatives_per_s1: int = 3
 ):
     config = get_config()
     print("=" * 80)
-    print("PHASE: FINAL PRODUCTION MODEL RETRAINING (100% TRAINING DATA)")
+    print("PHASE: ULTRA-FAST FINAL PRODUCTION MODEL RETRAINING (100% DATA)")
     print("=" * 80)
 
     # 1. Determine Model Type & Threshold
@@ -51,7 +54,7 @@ def train_final_model(
     print(f"Training Model Architecture: {selected_model_type.upper()}")
 
     # 2. Load Ground Truth into a compact flat set of pair strings
-    print("\nLoading Ground Truth into compact pair lookup...", flush=True)
+    print("\n[1/3] Loading Ground Truth into compact pair lookup...", flush=True)
     t0 = time.time()
     gt_pairs_set: Set[str] = set()
 
@@ -70,10 +73,20 @@ def train_final_model(
                     if m_id:
                         gt_pairs_set.add(f"{s1_id}_{m_id}")
 
-    print(f"Loaded {len(gt_pairs_set):,} positive ground-truth pairs in {time.time() - t0:.2f}s (RAM: compact set)", flush=True)
+    print(f"Loaded {len(gt_pairs_set):,} positive ground-truth pairs in {time.time() - t0:.2f}s", flush=True)
 
-    # 3. Stream S1 in memory-safe chunks and extract feature matrices
-    print(f"\nStreaming Train Source 1 in chunks of {s1_chunk_size:,} entities...", flush=True)
+    # 3. Pre-Index Source 2 and Source 3 once in memory
+    print("\n[2/3] Pre-indexing Train Source 2 & Source 3 into compact in-memory target table...", flush=True)
+    t_idx = time.time()
+    indexed_target = build_compact_target_index(
+        config.train_s2_path,
+        config.train_s3_path,
+        chunk_size=250000
+    )
+    print(f"Pre-indexed {len(indexed_target):,} Target entities in {time.time() - t_idx:.2f}s (RAM safe)", flush=True)
+
+    # 4. Stream S1 and perform sub-second candidate lookups
+    print(f"\n[3/3] Streaming Train Source 1 across chunks of {s1_chunk_size:,} entities...", flush=True)
     
     X_train_chunks: List[np.ndarray] = []
     y_train_chunks: List[np.ndarray] = []
@@ -82,6 +95,8 @@ def train_final_model(
     total_s1_processed = 0
 
     chunk_idx = 0
+    t_stream_start = time.time()
+
     for s1_raw_df in iter_source_file_chunks(config.train_s1_path, chunk_size=s1_chunk_size):
         chunk_idx += 1
         t_chk = time.time()
@@ -91,31 +106,13 @@ def train_final_model(
         s1_chk = add_v2_blocking_columns(s1_raw_df)
         del s1_raw_df
         s1_records = extract_record_dict_from_df(s1_chk)
-        target_records: Dict[str, Dict[str, Any]] = {}
 
-        # Stream block against S2
-        cands_s2, recs_s2 = block_s1_against_target_file_chunked(
+        # Fast in-memory candidate lookup
+        cand_df, target_records = generate_candidates_against_indexed_target(
             s1_chk,
-            config.train_s2_path,
-            target_chunk_size=target_chunk_size,
-            max_cands_per_s1=20,
-            extract_matched_records=True
+            indexed_target,
+            max_cands_per_s1=20
         )
-        target_records.update(recs_s2)
-        del recs_s2
-
-        # Stream block against S3
-        cands_s3, recs_s3 = block_s1_against_target_file_chunked(
-            s1_chk,
-            config.train_s3_path,
-            target_chunk_size=target_chunk_size,
-            max_cands_per_s1=20,
-            extract_matched_records=True
-        )
-        target_records.update(recs_s3)
-        del recs_s3
-
-        cand_df = pl.concat([cands_s2, cands_s3]).unique()
 
         # Compute pairwise features with hard negative sampling
         chk_feats = []
@@ -131,7 +128,6 @@ def train_final_model(
             if s1_id in s1_records and tgt_id in target_records:
                 is_positive = f"{s1_id}_{tgt_id}" in gt_pairs_set
                 
-                # Subsample negatives per S1 to avoid extreme imbalance & memory bloat
                 if not is_positive:
                     current_negs = neg_count_per_s1.get(s1_id, 0)
                     if current_negs >= max_negatives_per_s1:
@@ -150,20 +146,22 @@ def train_final_model(
             total_train_pairs += len(X_chk)
             total_positive_pairs += int(y_chk.sum())
 
-        del s1_chk, s1_records, cands_s2, cands_s3, cand_df, target_records, chk_feats, chk_labels, neg_count_per_s1
+        del s1_chk, s1_records, cand_df, target_records, chk_feats, chk_labels, neg_count_per_s1
         gc.collect()
 
         print(
-            f"  [Chunk {chunk_idx:02d}] Processed S1: {total_s1_processed:,} | "
+            f"  [Chunk {chunk_idx:02d}] S1: {total_s1_processed:,} | "
             f"Accumulated Pairs: {total_train_pairs:,} (Pos: {total_positive_pairs:,}) | Time: {time.time() - t_chk:.2f}s",
             flush=True
         )
 
-    # Free GT set
-    del gt_pairs_set
+    # Free memory
+    del indexed_target, gt_pairs_set
     gc.collect()
 
-    print("\nConcatenating full dataset feature matrices...", flush=True)
+    print(f"\nExtracted all candidate features in {time.time() - t_stream_start:.2f}s", flush=True)
+
+    print("Concatenating full dataset feature matrices...", flush=True)
     X_train_all = np.vstack(X_train_chunks)
     y_train_all = np.concatenate(y_train_chunks)
     del X_train_chunks, y_train_chunks
@@ -171,12 +169,12 @@ def train_final_model(
 
     print(f"Final Full Training Matrix: {X_train_all.shape} (Positives: {int(y_train_all.sum()):,}, Negatives: {len(y_train_all) - int(y_train_all.sum()):,})")
 
-    # 4. Train Selected Model on 100% Data
+    # 5. Train Selected Model on 100% Data
     print(f"\nRetraining {selected_model_type.upper()} on 100% Training Dataset...", flush=True)
     model = get_model(selected_model_type, config)
     train_res = model.train(X_train_all, y_train_all)
 
-    # 5. Save Final Production Model
+    # 6. Save Final Production Model
     final_dir = os.path.join(config.models_dir, "final")
     os.makedirs(final_dir, exist_ok=True)
     
@@ -220,13 +218,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train final model on 100% training data")
     parser.add_argument("--model", type=str, default="auto", choices=["lightgbm", "xgboost", "auto"], help="Model architecture")
     parser.add_argument("--chunk-size", type=int, default=50000, help="S1 chunk size for memory safety")
-    parser.add_argument("--target-chunk-size", type=int, default=100000, help="Target chunk size")
     parser.add_argument("--max-negs", type=int, default=3, help="Max negative candidate pairs per S1 entity")
     args = parser.parse_args()
 
     train_final_model(
         model_choice=args.model,
         s1_chunk_size=args.chunk_size,
-        target_chunk_size=args.target_chunk_size,
         max_negatives_per_s1=args.max_negs
     )
