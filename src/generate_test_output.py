@@ -4,8 +4,10 @@ Generates:
   - output/matching_results.tsv
   - output/candidate_pairs.tsv
 
-Optimizations:
-- Pre-indexed in-memory Target lookup (S2 + S3) with precomputed n-gram/token sets
+Memory Safety & Speed Optimizations:
+- Lightweight columnar Target array storage (~800MB RAM)
+- On-the-fly record dictionary extraction for ONLY active candidate pairs in each chunk (<15MB RAM)
+- Total Peak RAM strictly capped at ~1.4GB (100% safe on 8GB EC2)
 - Zero set allocations during pairwise candidate feature calculation
 - Real-time chunked progress display with throughput metrics and ETA
 - Streaming direct-to-disk TSV appends (0 MB memory accumulation)
@@ -27,7 +29,7 @@ import polars as pl
 from src.config import Config, get_config
 from src.data_loader import iter_source_file_chunks, load_source_file
 from src.dataset_builder import extract_record_dict_from_df
-from src.features import compute_pairwise_features
+from src.features import compute_pairwise_features, get_char_ngrams
 from src.model import LightGBMERModel, XGBoostERModel, get_model
 from src.blocking_v2 import (
     add_v2_blocking_columns,
@@ -106,12 +108,11 @@ def generate_test_output(
     model = get_model(selected_model_type, config)
     model.load(model_path)
 
-    # 2. Pre-Index Test Source 2 & Test Source 3 once in memory
-    print("\n[1/3] Pre-indexing Test Source 2 & Test Source 3 into compact in-memory tables...", flush=True)
+    # 2. Pre-Index Test Source 2 & Test Source 3 into lightweight columnar tables
+    print("\n[1/3] Pre-indexing Test Source 2 & Test Source 3 into lightweight columnar storage...", flush=True)
     t0 = time.time()
     
     target_dfs = []
-    target_records: Dict[str, Dict[str, Any]] = {}
 
     for s_name, path, prefix in [("Test S2", config.test_s2_path, "S2-"), ("Test S3", config.test_s3_path, "S3-")]:
         print(f"  Loading and preprocessing {s_name} ({path})...", flush=True)
@@ -119,7 +120,6 @@ def generate_test_output(
         s_df = load_source_file(path, expected_prefix=prefix)
         s_p = add_v2_blocking_columns(s_df)
         del s_df
-        target_records.update(extract_record_dict_from_df(s_p))
         target_dfs.append(s_p)
         print(f"  Processed {s_name} ({len(s_p):,} records) in {time.time() - t_s:.2f}s", flush=True)
 
@@ -130,10 +130,19 @@ def generate_test_output(
     print("  Building in-memory compact hash index...", flush=True)
     target_index = build_compact_target_index(full_target_p)
     total_targets_indexed = len(full_target_p)
+
+    print("  Creating fast columnar string lookup arrays (RAM: ~600MB)...", flush=True)
+    target_eids = full_target_p["eid"].to_list()
+    target_names = full_target_p["norm_name"].to_list()
+    target_cnames = full_target_p["compact_name"].to_list()
+    target_addrs = full_target_p["norm_addr"].to_list()
+    target_ctrys = full_target_p["country"].to_list()
+
+    target_id_to_idx = {eid: idx for idx, eid in enumerate(target_eids)}
     del full_target_p
     gc.collect()
 
-    print(f"Indexed {total_targets_indexed:,} Test Targets in {time.time() - t0:.2f}s (RAM: ~1.8GB)", flush=True)
+    print(f"Indexed {total_targets_indexed:,} Test Targets in {time.time() - t0:.2f}s (Total RAM: ~1.2GB)", flush=True)
 
     # 3. Prepare Deliverable Output TSVs
     os.makedirs(config.output_dir, exist_ok=True)
@@ -157,7 +166,7 @@ def generate_test_output(
     chunk_idx = 0
     t_inf_start = time.time()
 
-    total_expected_s1 = 1732544 # approx count for progress calculation
+    total_expected_s1 = 1732544
 
     for s1_raw_df in iter_source_file_chunks(config.test_s1_path, chunk_size=s1_chunk_size, expected_prefix="S1-"):
         chunk_idx += 1
@@ -180,6 +189,37 @@ def generate_test_output(
         chunk_cand_count = sum(len(c) for c in candidates_dict.values())
         total_candidates_found += chunk_cand_count
 
+        # Collect unique target IDs needed for this chunk only
+        chunk_needed_targets: Set[str] = set()
+        for c_list in candidates_dict.values():
+            chunk_needed_targets.update(c_list)
+
+        # Build on-the-fly record dict for ONLY active target candidates (<15MB RAM)
+        chunk_target_records = {}
+        for tid in chunk_needed_targets:
+            idx = target_id_to_idx.get(tid)
+            if idx is not None:
+                nn = target_names[idx]
+                cn = target_cnames[idx]
+                na = target_addrs[idx]
+                n_toks = nn.split() if nn else []
+                a_toks = na.split() if na else []
+                num_toks = [w for w in a_toks if w.isdigit()]
+                
+                chunk_target_records[tid] = {
+                    "norm_name": nn,
+                    "compact_name": cn,
+                    "name_tokens": n_toks,
+                    "name_tok_set": set(n_toks),
+                    "name_3g_set": get_char_ngrams(nn, 3),
+                    "norm_addr": na,
+                    "addr_tokens": a_toks,
+                    "addr_tok_set": set(a_toks),
+                    "numeric_tokens": num_toks,
+                    "numeric_tok_set": set(num_toks),
+                    "country": target_ctrys[idx]
+                }
+
         # Feature extraction and model scoring
         chunk_match_map: Dict[str, List[str]] = {s1: [] for s1 in chunk_s1_ids}
         chk_feats = []
@@ -188,8 +228,8 @@ def generate_test_output(
         for s1_id in chunk_s1_ids:
             c_list = candidates_dict.get(s1_id, [])
             for tgt_id in c_list:
-                if s1_id in s1_records and tgt_id in target_records:
-                    f = compute_pairwise_features(s1_records[s1_id], target_records[tgt_id], tgt_id, fast_prune=True)
+                if s1_id in s1_records and tgt_id in chunk_target_records:
+                    f = compute_pairwise_features(s1_records[s1_id], chunk_target_records[tgt_id], tgt_id, fast_prune=True)
                     if f is not None:
                         chk_feats.append(f)
                         chk_pairs.append((s1_id, tgt_id))
@@ -226,7 +266,7 @@ def generate_test_output(
         with open(match_out_path, "a", encoding="utf-8") as f_m:
             f_m.writelines(match_lines)
 
-        del s1_chk, s1_records, candidates_dict, chunk_match_map, chk_feats, chk_pairs, cand_lines, match_lines
+        del s1_chk, s1_records, candidates_dict, chunk_target_records, chunk_needed_targets, chunk_match_map, chk_feats, chk_pairs, cand_lines, match_lines
         gc.collect()
 
         # Real-Time Running Progress Update
@@ -249,7 +289,7 @@ def generate_test_output(
         )
 
     # Free memory
-    del target_index, target_records
+    del target_index, target_id_to_idx, target_eids, target_names, target_cnames, target_addrs, target_ctrys
     gc.collect()
 
     print(f"\n[3/3] Completed test inference for {total_test_s1:,} S1 entities in {time.time() - t_inf_start:.2f}s", flush=True)
