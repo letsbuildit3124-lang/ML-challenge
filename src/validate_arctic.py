@@ -43,11 +43,14 @@ def evaluate_subset_metrics(
 ) -> Dict[str, float]:
     """Computes Macro F0.5, Precision, Recall for a specific geographic subset of S1 entities."""
     if not s1_subset_ids:
-        return {"count": 0, "macro_f05": 0.0, "precision": 0.0, "recall": 0.0}
+        return {"count": 0, "macro_f05": 0.0, "precision": 0.0, "recall": 0.0, "singleton_acc": 0.0}
 
     sub_gt = {sid: gt_mapping.get(sid, []) for sid in s1_subset_ids}
-    sub_cands = {sid: cand_scores.get(sid, []) for sid in s1_subset_ids}
-    metrics = evaluate_predictions(sub_gt, sub_cands, threshold)
+    sub_pred = {
+        sid: [tgt_id for tgt_id, prob in cand_scores.get(sid, []) if prob >= threshold]
+        for sid in s1_subset_ids
+    }
+    metrics = evaluate_predictions(sub_gt, sub_pred)
     return {
         "count": len(s1_subset_ids),
         "macro_f05": metrics["macro_f05"],
@@ -100,9 +103,9 @@ def run_arctic_validation(
     print(f"Loaded {len(s1_val_p):,} S1 validation records in {time.time() - t0:.2f}s.")
 
     # Identify geographic subsets for S1
-    us_s1_ids = [sid for sid, r in s1_records.items() if r.get("country") == "US"]
-    in_s1_ids = [sid for sid, r in s1_records.items() if r.get("country") == "IN"]
-    fr_s1_ids = [sid for sid, r in s1_records.items() if r.get("country") in ["FR", "FRANCE", "FRA"]]
+    us_s1_ids = [sid for sid, r in s1_records.items() if str(r.get("country", "")).upper() in ["US", "USA", "UNITED STATES"]]
+    in_s1_ids = [sid for sid, r in s1_records.items() if str(r.get("country", "")).upper() in ["INDIA", "IN", "IND"]]
+    fr_s1_ids = [sid for sid, r in s1_records.items() if str(r.get("country", "")).upper() in ["FR", "FRANCE", "FRA"]]
     print(f"Geographic Slices: US={len(us_s1_ids):,}, India={len(in_s1_ids):,}, France/Multilingual={len(fr_s1_ids):,}")
 
     # 2. Load Ground Truth
@@ -182,17 +185,50 @@ def run_arctic_validation(
     )
     expanded_cands, provenance_map = merge_candidate_dictionaries(deterministic_cands, semantic_cands, max_total_cands=50)
 
-    # 6. Load Trained XGBoost Model
-    model = get_model("xgboost", config)
+    # 6. Load Trained Model (XGBoost or LightGBM)
+    model = None
     final_m_path = os.path.join(config.models_dir, "final", "final_model.json")
+    lgb_m_path = os.path.join(config.models_dir, "final", "final_model.txt")
+    
     if os.path.exists(final_m_path):
-        model.load(final_m_path)
-    else:
-        # Train baseline model on a quick sample if checkpoint not found
-        from src.train_final import train_production_pipeline
-        print("Trained model checkpoint not found. Retraining baseline model...")
-        train_production_pipeline(model_type="xgboost", max_train_s1=20000)
-        model.load(final_m_path)
+        try:
+            model = get_model("xgboost", config)
+            model.load(final_m_path)
+        except Exception:
+            model = None
+
+    if model is None and os.path.exists(lgb_m_path):
+        try:
+            model = get_model("lightgbm", config)
+            model.load(lgb_m_path)
+        except Exception:
+            model = None
+
+    if model is None and os.path.exists(config.model_save_path):
+        try:
+            model = get_model("lightgbm", config)
+            model.load(config.model_save_path)
+        except Exception:
+            model = None
+
+    if model is None:
+        try:
+            model = get_model("xgboost", config)
+            model_type = "xgboost"
+        except Exception:
+            model = get_model("lightgbm", config)
+            model_type = "lightgbm"
+
+        print(f"[validate_arctic] Model checkpoint not found. Retraining {model_type} baseline model...")
+        from src.train_final import train_final_model
+        train_final_model(model_choice=model_type)
+        if model_type == "xgboost" and os.path.exists(final_m_path):
+            model.load(final_m_path)
+        elif os.path.exists(lgb_m_path):
+            model = get_model("lightgbm", config)
+            model.load(lgb_m_path)
+        elif os.path.exists(config.model_save_path):
+            model.load(config.model_save_path)
 
     # =========================================================================
     # 7. RUN 3-WAY CONTROLLED EXPERIMENT ACROSS SEEDS
@@ -283,13 +319,30 @@ def run_arctic_validation(
 
                 if feats_list:
                     feats_arr = np.array(feats_list, dtype=np.float32)
-                    # Use first 35 features if model expects 35, or full 36 if retrained
-                    model_input = feats_arr[:, :35] if feats_arr.shape[1] > 35 else feats_arr
+                    # Dynamically slice to model's expected feature dimension
+                    expected_features = 35
+                    if hasattr(model, "model") and model.model is not None:
+                        if hasattr(model.model, "num_feature"):
+                            try:
+                                expected_features = model.model.num_feature()
+                            except Exception:
+                                expected_features = 35
+                        elif hasattr(model.model, "n_features_in_"):
+                            expected_features = model.model.n_features_in_
+
+                    if feats_arr.shape[1] > expected_features:
+                        model_input = feats_arr[:, :expected_features]
+                    elif feats_arr.shape[1] < expected_features:
+                        pad = np.zeros((feats_arr.shape[0], expected_features - feats_arr.shape[1]), dtype=np.float32)
+                        model_input = np.hstack([feats_arr, pad])
+                    else:
+                        model_input = feats_arr
+
                     probs = model.predict_proba(model_input)
                     
                     # If Arctic feature enabled, blend high-confidence semantic similarity
-                    if use_arctic_feat and feats_arr.shape[1] > 35:
-                        sims = feats_arr[:, 35]
+                    if use_arctic_feat and feats_arr.shape[1] >= 36:
+                        sims = feats_arr[:, -1]
                         # Rescale probabilities with semantic agreement boost
                         probs = 0.85 * probs + 0.15 * np.clip(sims, 0.0, 1.0)
 
@@ -444,7 +497,8 @@ We conducted a controlled 3-way benchmark to rigorously determine the utility an
     print(f"[ArcticReport] Saved report to {md_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Antigravity V3 Arctic Embedding Validation")
     parser.add_argument("--count", type=int, default=2500, help="Number of S1 validation entities to evaluate per seed")
+    parser.add_argument("--model", type=str, default="auto", choices=["auto", "xgboost", "lightgbm"], help="Model architecture")
     args = parser.parse_args()
     run_arctic_validation(eval_count=args.count)
