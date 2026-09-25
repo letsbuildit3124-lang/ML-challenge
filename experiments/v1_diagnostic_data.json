@@ -1,0 +1,1052 @@
+{
+  "candidate_recall_summary": {
+    "total_ground_truth_pairs": 8622,
+    "total_recovered_pairs": 5353,
+    "overall_candidate_recall": 0.6208536302482023,
+    "s1_to_s2_candidate_recall": 0.6294428434197886,
+    "s1_to_s3_candidate_recall": 0.6128308658591296,
+    "multi_match_candidate_recall": 0.6205677936152668,
+    "singleton_s1_count": 151,
+    "singleton_avg_candidates": 74.54304635761589,
+    "distribution": {
+      "total_candidate_pairs": 166296,
+      "avg_candidates_per_s1": 66.5184,
+      "median_candidates_per_s1": 5.0,
+      "p90_candidates_per_s1": 121.0,
+      "p95_candidates_per_s1": 490.2499999999932,
+      "max_candidates_per_s1": 2310
+    }
+  },
+  "method_results": [
+    {
+      "method": "exact_compact_name",
+      "candidate_count": 159709,
+      "unique_candidate_pairs": 159709,
+      "gt_pairs_recovered": 3810,
+      "recall": 0.441892832289492,
+      "incremental_recovered": 3810,
+      "cumulative_recall": 0.441892832289492
+    },
+    {
+      "method": "exact_normalized_name",
+      "candidate_count": 25033,
+      "unique_candidate_pairs": 25033,
+      "gt_pairs_recovered": 1947,
+      "recall": 0.2258176757132916,
+      "incremental_recovered": 6,
+      "cumulative_recall": 0.44258872651356995
+    },
+    {
+      "method": "cname8_addr_num",
+      "candidate_count": 9563,
+      "unique_candidate_pairs": 9563,
+      "gt_pairs_recovered": 4074,
+      "recall": 0.4725121781489214,
+      "incremental_recovered": 1466,
+      "cumulative_recall": 0.6126188819299466
+    },
+    {
+      "method": "f2_words_addr_num",
+      "candidate_count": 4233,
+      "unique_candidate_pairs": 4233,
+      "gt_pairs_recovered": 3256,
+      "recall": 0.3776385989329622,
+      "incremental_recovered": 71,
+      "cumulative_recall": 0.6208536302482023
+    }
+  ],
+  "threshold_curve": [
+    {
+      "threshold": 0.1,
+      "precision": 0.820524541137979,
+      "recall": 0.6371749206349206,
+      "macro_f05": 0.7029844613440015,
+      "number_of_predicted_matches": 7292,
+      "average_matches_per_S1": 2.9168,
+      "singleton_accuracy": 0.6754966887417219
+    },
+    {
+      "threshold": 0.15,
+      "precision": 0.8431924309900626,
+      "recall": 0.6331606349206349,
+      "macro_f05": 0.7157899824731515,
+      "number_of_predicted_matches": 6829,
+      "average_matches_per_S1": 2.7316,
+      "singleton_accuracy": 0.7284768211920529
+    },
+    {
+      "threshold": 0.2,
+      "precision": 0.8688191842368158,
+      "recall": 0.6292634920634921,
+      "macro_f05": 0.7277017970661758,
+      "number_of_predicted_matches": 6446,
+      "average_matches_per_S1": 2.5784,
+      "singleton_accuracy": 0.7814569536423841
+    },
+    {
+      "threshold": 0.25,
+      "precision": 0.9050027192088957,
+      "recall": 0.6251120634920635,
+      "macro_f05": 0.7442836082574166,
+      "number_of_predicted_matches": 6003,
+      "average_matches_per_S1": 2.4012,
+      "singleton_accuracy": 0.8145695364238411
+    },
+    {
+      "threshold": 0.3,
+      "precision": 0.9265512698412698,
+      "recall": 0.6216773015873015,
+      "macro_f05": 0.755016167514045,
+      "number_of_predicted_matches": 5725,
+      "average_matches_per_S1": 2.29,
+      "singleton_accuracy": 0.8410596026490066
+    },
+    {
+      "threshold": 0.35,
+      "precision": 0.9501531746031746,
+      "recall": 0.6157549206349207,
+      "macro_f05": 0.7655572415504287,
+      "number_of_predicted_matches": 5435,
+      "average_matches_per_S1": 2.174,
+      "singleton_accuracy": 0.8741721854304636
+    },
+    {
+      "threshold": 0.4,
+      "precision": 0.9606741269841268,
+      "recall": 0.6129873015873016,
+      "macro_f05": 0.7695076992338687,
+      "number_of_predicted_matches": 5330,
+      "average_matches_per_S1": 2.132,
+      "singleton_accuracy": 0.8940397350993378
+    },
+    {
+      "threshold": 0.45,
+      "precision": 0.9658367676767677,
+      "recall": 0.6111263492063492,
+      "macro_f05": 0.7708683286964629,
+      "number_of_predicted_matches": 5275,
+      "average_matches_per_S1": 2.11,
+      "singleton_accuracy": 0.9006622516556292
+    },
+    {
+      "threshold": 0.5,
+      "precision": 0.9698831746031746,
+      "recall": 0.6083520634920635,
+      "macro_f05": 0.7709531272140151,
+      "number_of_predicted_matches": 5225,
+      "average_matches_per_S1": 2.09,
+      "singleton_accuracy": 0.9139072847682119
+    },
+    {
+      "threshold": 0.55,
+      "precision": 0.9728174603174602,
+      "recall": 0.6061787301587301,
+      "macro_f05": 0.7709471222025147,
+      "number_of_predicted_matches": 5186,
+      "average_matches_per_S1": 2.0744,
+      "singleton_accuracy": 0.9139072847682119
+    },
+    {
+      "threshold": 0.6,
+      "precision": 0.9767250793650794,
+      "recall": 0.603120634920635,
+      "macro_f05": 0.7708793194296601,
+      "number_of_predicted_matches": 5136,
+      "average_matches_per_S1": 2.0544,
+      "singleton_accuracy": 0.9271523178807947
+    },
+    {
+      "threshold": 0.65,
+      "precision": 0.9784317460317461,
+      "recall": 0.6000987301587302,
+      "macro_f05": 0.7696775604538485,
+      "number_of_predicted_matches": 5096,
+      "average_matches_per_S1": 2.0384,
+      "singleton_accuracy": 0.9271523178807947
+    },
+    {
+      "threshold": 0.7,
+      "precision": 0.9826117460317461,
+      "recall": 0.5973909523809524,
+      "macro_f05": 0.7706056462457281,
+      "number_of_predicted_matches": 5043,
+      "average_matches_per_S1": 2.0172,
+      "singleton_accuracy": 0.9403973509933775
+    },
+    {
+      "threshold": 0.75,
+      "precision": 0.9856228571428571,
+      "recall": 0.5931338095238096,
+      "macro_f05": 0.769371055056192,
+      "number_of_predicted_matches": 4983,
+      "average_matches_per_S1": 1.9932,
+      "singleton_accuracy": 0.9470198675496688
+    },
+    {
+      "threshold": 0.8,
+      "precision": 0.9893695238095239,
+      "recall": 0.5886304761904761,
+      "macro_f05": 0.7686588978061848,
+      "number_of_predicted_matches": 4926,
+      "average_matches_per_S1": 1.9704,
+      "singleton_accuracy": 0.9668874172185431
+    },
+    {
+      "threshold": 0.85,
+      "precision": 0.9904695238095239,
+      "recall": 0.5839428571428572,
+      "macro_f05": 0.7653531156821802,
+      "number_of_predicted_matches": 4874,
+      "average_matches_per_S1": 1.9496,
+      "singleton_accuracy": 0.9668874172185431
+    },
+    {
+      "threshold": 0.9,
+      "precision": 0.9927828571428572,
+      "recall": 0.5770557142857143,
+      "macro_f05": 0.7601918802268143,
+      "number_of_predicted_matches": 4802,
+      "average_matches_per_S1": 1.9208,
+      "singleton_accuracy": 0.9735099337748344
+    },
+    {
+      "threshold": 0.95,
+      "precision": 0.9958628571428573,
+      "recall": 0.5626595238095239,
+      "macro_f05": 0.7494122491330582,
+      "number_of_predicted_matches": 4650,
+      "average_matches_per_S1": 1.86,
+      "singleton_accuracy": 0.9933774834437086
+    }
+  ],
+  "fn_category_a_count": 3269,
+  "fn_category_b_count": 273,
+  "total_false_negatives": 3542,
+  "fn_category_a_samples": [
+    {
+      "s1_id": "S1-354920261",
+      "target_id": "S2-933457704",
+      "s1_name": "harbor aviation",
+      "s1_addr": "1226 6th avenue kankakee il",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-32931506",
+      "target_id": "S2-224082656",
+      "s1_name": "moreno smith and scott pc",
+      "s1_addr": "1724 campus corner place edmond ok",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-32931506",
+      "target_id": "S2-830310350",
+      "s1_name": "moreno smith and scott pc",
+      "s1_addr": "1724 campus corner place edmond ok",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-156012339",
+      "target_id": "S2-35108575",
+      "s1_name": "systems real innovations private limited",
+      "s1_addr": "10952 ground floor shidipura doriwalan karol bagh new delhi central delhi delhi",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-156012339",
+      "target_id": "S2-17502432",
+      "s1_name": "systems real innovations private limited",
+      "s1_addr": "10952 ground floor shidipura doriwalan karol bagh new delhi central delhi delhi",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-526604791",
+      "target_id": "S3-902801749",
+      "s1_name": "pus horizon paper",
+      "s1_addr": "2696 2200 west haven ut",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-913662922",
+      "target_id": "S2-823588388",
+      "s1_name": "carmona equity partners llc",
+      "s1_addr": "2288 old 101 road liberty unit 486 in",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-913662922",
+      "target_id": "S3-255358559",
+      "s1_name": "carmona equity partners llc",
+      "s1_addr": "2288 old 101 road liberty unit 486 in",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-333783106",
+      "target_id": "S3-214669786",
+      "s1_name": "lessard heartland bakery",
+      "s1_addr": "9308 telegraph wire court henrico county va",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-333783106",
+      "target_id": "S3-246852296",
+      "s1_name": "lessard heartland bakery",
+      "s1_addr": "9308 telegraph wire court henrico county va",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-338780140",
+      "target_id": "S2-664746752",
+      "s1_name": "pelayo s total services",
+      "s1_addr": "5828 william street omaha ne",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-338780140",
+      "target_id": "S2-354525077",
+      "s1_name": "pelayo s total services",
+      "s1_addr": "5828 william street omaha ne",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-430333209",
+      "target_id": "S2-114630228",
+      "s1_name": "krishna energy llp",
+      "s1_addr": "05 sv 2 3rd flr s 05 eldeco utopia sector93 a noida ghaziabad uttar pradesh",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-430333209",
+      "target_id": "S2-866160938",
+      "s1_name": "krishna energy llp",
+      "s1_addr": "05 sv 2 3rd flr s 05 eldeco utopia sector93 a noida ghaziabad uttar pradesh",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-430333209",
+      "target_id": "S2-960291094",
+      "s1_name": "krishna energy llp",
+      "s1_addr": "05 sv 2 3rd flr s 05 eldeco utopia sector93 a noida ghaziabad uttar pradesh",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-430333209",
+      "target_id": "S3-101703109",
+      "s1_name": "krishna energy llp",
+      "s1_addr": "05 sv 2 3rd flr s 05 eldeco utopia sector93 a noida ghaziabad uttar pradesh",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-430333209",
+      "target_id": "S3-187102944",
+      "s1_name": "krishna energy llp",
+      "s1_addr": "05 sv 2 3rd flr s 05 eldeco utopia sector93 a noida ghaziabad uttar pradesh",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-811069632",
+      "target_id": "S2-739476757",
+      "s1_name": "hitech om builders pvt ltd",
+      "s1_addr": "a 215 plot no 63 skylark buildg sector 11 thane maharashtra",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-811069632",
+      "target_id": "S2-129815454",
+      "s1_name": "hitech om builders pvt ltd",
+      "s1_addr": "a 215 plot no 63 skylark buildg sector 11 thane maharashtra",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-811069632",
+      "target_id": "S3-736604110",
+      "s1_name": "hitech om builders pvt ltd",
+      "s1_addr": "a 215 plot no 63 skylark buildg sector 11 thane maharashtra",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-811069632",
+      "target_id": "S3-641742874",
+      "s1_name": "hitech om builders pvt ltd",
+      "s1_addr": "a 215 plot no 63 skylark buildg sector 11 thane maharashtra",
+      "s1_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-794511589",
+      "target_id": "S3-861655402",
+      "s1_name": "health project",
+      "s1_addr": "1100 oak street neosho falls ks",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-258757151",
+      "target_id": "S2-10434771",
+      "s1_name": "first jewelers pc",
+      "s1_addr": "404 augusta avenue grottoes town va",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-258757151",
+      "target_id": "S2-527185434",
+      "s1_name": "first jewelers pc",
+      "s1_addr": "404 augusta avenue grottoes town va",
+      "s1_country": "US"
+    },
+    {
+      "s1_id": "S1-258757151",
+      "target_id": "S3-490023601",
+      "s1_name": "first jewelers pc",
+      "s1_addr": "404 augusta avenue grottoes town va",
+      "s1_country": "US"
+    }
+  ],
+  "fn_category_b_samples": [
+    {
+      "s1_id": "S1-354920261",
+      "target_id": "S2-851454400",
+      "probability": 0.24192761145838323,
+      "s1_name": "harbor aviation",
+      "target_name": "harbor aviation",
+      "s1_addr": "1226 6th avenue kankakee il",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-180275224",
+      "target_id": "S2-507114700",
+      "probability": 0.1927489494490396,
+      "s1_name": "shubhkamna college",
+      "target_name": "shubhkamna college llp",
+      "s1_addr": "block no survey no 194 part mouje vemali tal vadodara vadodara gujarat",
+      "target_addr": "",
+      "country": "INDIA",
+      "name_sim": 0.0,
+      "addr_sim": 0.8181818181818181
+    },
+    {
+      "s1_id": "S1-995893492",
+      "target_id": "S2-181197449",
+      "probability": 0.07859423430603633,
+      "s1_name": "kishan sons private limited",
+      "target_name": "kishan sons private limited services",
+      "s1_addr": "1 347 saraswati sadan sirohi sirohi rajasthan",
+      "target_addr": "01 347 saraswati sadan sirohi sirohi \u0930\u093e\u091c\u0938\u094d\u0925\u093e\u0928",
+      "country": "INDIA",
+      "name_sim": 0.0,
+      "addr_sim": 0.75
+    },
+    {
+      "s1_id": "S1-650245478",
+      "target_id": "S3-678956069",
+      "probability": 0.3505381925668454,
+      "s1_name": "king and likens",
+      "target_name": "king and likens",
+      "s1_addr": "1602 ludlow drive phoenix az",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-818093454",
+      "target_id": "S2-5415839",
+      "probability": 0.2993631824243364,
+      "s1_name": "carpenter soulpower llc",
+      "target_name": "carpenter soulpower llc",
+      "s1_addr": "402 3rd avenue oelwein ia",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-914652360",
+      "target_id": "S2-33632499",
+      "probability": 0.1707149660345806,
+      "s1_name": "andheri w india private limited",
+      "target_name": "andheri w india private",
+      "s1_addr": "905 906 samarth vaibhav opp tarapore tower oshiwara andheri w mumbai maharashtra",
+      "target_addr": "",
+      "country": "INDIA",
+      "name_sim": 0.0,
+      "addr_sim": 0.7419354838709677
+    },
+    {
+      "s1_id": "S1-914652360",
+      "target_id": "S2-887421342",
+      "probability": 0.39002667547355185,
+      "s1_name": "andheri w india private limited",
+      "target_name": "andheri w india private ltd",
+      "s1_addr": "905 906 samarth vaibhav opp tarapore tower oshiwara andheri w mumbai maharashtra",
+      "target_addr": "",
+      "country": "INDIA",
+      "name_sim": 0.0,
+      "addr_sim": 0.8709677419354839
+    },
+    {
+      "s1_id": "S1-744988342",
+      "target_id": "S2-876181937",
+      "probability": 0.24455112260573014,
+      "s1_name": "susann s landscaping",
+      "target_name": "susann s landscaping co",
+      "s1_addr": "490 vigue road me whitefield",
+      "target_addr": "0490 vigue rd null whitefield me",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8695652173913043
+    },
+    {
+      "s1_id": "S1-567898159",
+      "target_id": "S3-530767709",
+      "probability": 0.3163459796318678,
+      "s1_name": "alexander liberty inc",
+      "target_name": "alexander liberty inc",
+      "s1_addr": "1144 calabash station boulevard calabash nc",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-643822428",
+      "target_id": "S3-739743916",
+      "probability": 0.18435849040401425,
+      "s1_name": "lorene s pizza llc",
+      "target_name": "lorene s pizza",
+      "s1_addr": "murfreesboro 475 swanholme drive unit 308 tn",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.7777777777777778
+    },
+    {
+      "s1_id": "S1-491681705",
+      "target_id": "S3-708025739",
+      "probability": 0.10314827764706169,
+      "s1_name": "wysocki and parr element co",
+      "target_name": "wysocki and parr element",
+      "s1_addr": "623 caroline street fredericksburg city va",
+      "target_addr": "23 caroline st fredericksburg city virginia",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8888888888888888
+    },
+    {
+      "s1_id": "S1-203147202",
+      "target_id": "S3-969519934",
+      "probability": 0.3665729515371161,
+      "s1_name": "sandoval best worldwide inc",
+      "target_name": "sandoval best worldwide",
+      "s1_addr": "10932 brittany drive dakota ridge co",
+      "target_addr": "0932 brittany drive dakota ridge colorado",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8518518518518519
+    },
+    {
+      "s1_id": "S1-68429555",
+      "target_id": "S2-75946750",
+      "probability": 0.0026890910111730683,
+      "s1_name": "first defense international",
+      "target_name": "first defense services",
+      "s1_addr": "8700 university drive unit 2860 mesa az",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.6296296296296297
+    },
+    {
+      "s1_id": "S1-741121379",
+      "target_id": "S3-319812660",
+      "probability": 0.3247749663335577,
+      "s1_name": "naidiad minerals",
+      "target_name": "naidiad minerals",
+      "s1_addr": "kheda gujarat first floor rudra vihar complex naidiad shop no 136",
+      "target_addr": "",
+      "country": "INDIA",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-281251651",
+      "target_id": "S2-584160771",
+      "probability": 0.2096949965859241,
+      "s1_name": "pacific superior drive inc",
+      "target_name": "pacific superior drive",
+      "s1_addr": "23 edgehill road billerica ma",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8461538461538461
+    },
+    {
+      "s1_id": "S1-808817638",
+      "target_id": "S3-73337061",
+      "probability": 0.17151193081978203,
+      "s1_name": "signature proem co",
+      "target_name": "signature proem",
+      "s1_addr": "4968 jody lynn drive mentor oh",
+      "target_addr": "mentor ohio 496 jody lynn dr",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8333333333333334
+    },
+    {
+      "s1_id": "S1-794272801",
+      "target_id": "S3-383562714",
+      "probability": 0.25341143771715097,
+      "s1_name": "sgs awas private limited",
+      "target_name": "sgs awas private limited",
+      "s1_addr": "d 52defence colony new delhi south delhi delhi",
+      "target_addr": "",
+      "country": "INDIA",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-365300342",
+      "target_id": "S3-63002178",
+      "probability": 0.37695567950916475,
+      "s1_name": "austin health center inc",
+      "target_name": "austin health center inc district",
+      "s1_addr": "ct weston 128 davis hill road",
+      "target_addr": "connecticut 128 1 2 davis hill road weston",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.7272727272727273
+    },
+    {
+      "s1_id": "S1-564253524",
+      "target_id": "S3-448835563",
+      "probability": 0.3505381925668454,
+      "s1_name": "baor trailblazer pllc",
+      "target_name": "baor trailblazer pllc",
+      "s1_addr": "6549 39th street tucson az",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-9324035",
+      "target_id": "S2-366921278",
+      "probability": 0.06319814170743802,
+      "s1_name": "stutts and roller pampa",
+      "target_name": "stutts and roller pampa corp",
+      "s1_addr": "5023 shady villa ct unit 101 louisville ky",
+      "target_addr": "502 shady villa ct po box 5852 louisville ky",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8214285714285714
+    },
+    {
+      "s1_id": "S1-625332498",
+      "target_id": "S2-282809494",
+      "probability": 0.20101524675544122,
+      "s1_name": "sibbie stiltner federal culture",
+      "target_name": "sibbie stiltner federal culture inc",
+      "s1_addr": "14524 cooper avenue dixmoor il",
+      "target_addr": "14524d cooper ave dixmoor il",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.8857142857142857
+    },
+    {
+      "s1_id": "S1-466113605",
+      "target_id": "S3-198266150",
+      "probability": 0.32940386543429506,
+      "s1_name": "first clean trust inc",
+      "target_name": "first clean trust inc",
+      "s1_addr": "8501 northshore drive unit 143 knoxville tn",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 1.0,
+      "addr_sim": 1.0
+    },
+    {
+      "s1_id": "S1-519602774",
+      "target_id": "S3-181678043",
+      "probability": 0.2561514811842545,
+      "s1_name": "excel co",
+      "target_name": "excel",
+      "s1_addr": "maharashtra sea mist sector 8 charkop kandivali west mumbai city a 502",
+      "target_addr": "",
+      "country": "INDIA",
+      "name_sim": 0.0,
+      "addr_sim": 0.625
+    },
+    {
+      "s1_id": "S1-737957611",
+      "target_id": "S3-646276443",
+      "probability": 0.3504709591166657,
+      "s1_name": "trading new technologies",
+      "target_name": "trading new",
+      "s1_addr": "d 220 preeti nagar tarikhana sitapur road lucknow uttar pradesh",
+      "target_addr": "sitapur road d 0220 up lucknow preeti nagar tarikhana",
+      "country": "INDIA",
+      "name_sim": 0.0,
+      "addr_sim": 0.45833333333333337
+    },
+    {
+      "s1_id": "S1-169898634",
+      "target_id": "S2-933830912",
+      "probability": 0.025673483463009166,
+      "s1_name": "citadel",
+      "target_name": "citadel industries",
+      "s1_addr": "22275 tomahawk lane ar garfield",
+      "target_addr": "",
+      "country": "US",
+      "name_sim": 0.0,
+      "addr_sim": 0.38888888888888884
+    }
+  ],
+  "total_false_positives": 250,
+  "fp_samples": [
+    {
+      "s1_id": "S1-900139625",
+      "target_id": "S2-390299860",
+      "probability": 0.6305621673157955,
+      "s1_name": "jks consultancy",
+      "target_name": "jks consultancy infratech",
+      "s1_addr": "h no 2 23 b 129 a plot no 129 a samatha nagar near mnrcollege kukatpally hyderabad telangana",
+      "target_addr": "h no 2 23 b 130 a plot no 129 a samatha nagar near mnrcollege kukatpally hyderabad telangana",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-114621325",
+      "target_id": "S2-797200923",
+      "probability": 0.44594543745112747,
+      "s1_name": "surgical partners",
+      "target_name": "surgical partners inc",
+      "s1_addr": "2711 35th terrace kansas city mo",
+      "target_addr": "1823 askew avenue kansas city mo",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-173898968",
+      "target_id": "S3-317246332",
+      "probability": 0.4710664822631363,
+      "s1_name": "corner seafood",
+      "target_name": "corner seafood co",
+      "s1_addr": "202 lake avenue city of crandon wi",
+      "target_addr": "213 lake ave city of crandon wisconsin",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-183509591",
+      "target_id": "S3-811726979",
+      "probability": 0.8864730265507771,
+      "s1_name": "digital solutions private limited",
+      "target_name": "digital private solutions limited",
+      "s1_addr": "c o jagdish chaurasiya a 1 panch matya khas vill shiurajpur block kuchaikote gopalganj bihar",
+      "target_addr": "plot c 1 s a s nagar mohali mohali pb",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-572767999",
+      "target_id": "S3-821292683",
+      "probability": 0.7328846279374305,
+      "s1_name": "behavioral health care associates",
+      "target_name": "behavioral health beacon care associates commission",
+      "s1_addr": "108 1st street bridgewater ia",
+      "target_addr": "108 wharton street saint charles township missouri",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-572767999",
+      "target_id": "S3-982861908",
+      "probability": 0.8647076636795222,
+      "s1_name": "behavioral health care associates",
+      "target_name": "behavioral health beacon associates care",
+      "s1_addr": "108 1st street bridgewater ia",
+      "target_addr": "108 wharton street saint charles township missouri",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-276920522",
+      "target_id": "S3-843287693",
+      "probability": 0.5370498858484969,
+      "s1_name": "bangalore oil limited",
+      "target_name": "bangalore consulting private limited",
+      "s1_addr": "no 18 3rd main 2nd block nandini layout bangalore karnataka",
+      "target_addr": "no g 18 bangalore ka",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-276920522",
+      "target_id": "S3-478895555",
+      "probability": 0.4282684366954805,
+      "s1_name": "bangalore oil limited",
+      "target_name": "bangalore interiors private limited",
+      "s1_addr": "no 18 3rd main 2nd block nandini layout bangalore karnataka",
+      "target_addr": "no g 18 bangalore ka",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-125288628",
+      "target_id": "S2-932278920",
+      "probability": 0.7750194383052285,
+      "s1_name": "seven india property llp",
+      "target_name": "seven india property pvt ltd",
+      "s1_addr": "67b gopal mansion chs ltd gurunanak rd opp kooper mumbai maharashtra",
+      "target_addr": "72b gopal mansion chs ltd gurunanak rd opp kooper mumbai maharashtra",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-323982260",
+      "target_id": "S3-806010590",
+      "probability": 0.9543899102961254,
+      "s1_name": "ace fuse inc",
+      "target_name": "ace fuse group",
+      "s1_addr": "w11408 35 town of oak grove wi",
+      "target_addr": "w11429 35 town of oak grove wisconsin",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-41200171",
+      "target_id": "S3-973266553",
+      "probability": 0.5329159608245789,
+      "s1_name": "diamond energy brands llc",
+      "target_name": "diamond energy brands partners",
+      "s1_addr": "11 43 neilson street ny far rockaway",
+      "target_addr": "11 50 neilson st far rockawway new york",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-824736472",
+      "target_id": "S2-983766723",
+      "probability": 0.7646850153017757,
+      "s1_name": "cardiology physicians",
+      "target_name": "cardiology physicians",
+      "s1_addr": "19368 madison street buckeye az",
+      "target_addr": "5900 main street globe az",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-702640776",
+      "target_id": "S2-686512727",
+      "probability": 0.5250309964493085,
+      "s1_name": "surgical physicians",
+      "target_name": "surgical physicians",
+      "s1_addr": "chicago 8835 eggleston avenue il",
+      "target_addr": "mattoon 1321 charleston avenue il",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-603704000",
+      "target_id": "S2-63844292",
+      "probability": 0.5469920466736112,
+      "s1_name": "diamond commercial company",
+      "target_name": "diamond commercial company ltd",
+      "s1_addr": "collinwood tn 7115 pinhook pike",
+      "target_addr": "7117 pinhook pike collinwood tn",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-752971403",
+      "target_id": "S3-160861631",
+      "probability": 0.6181312108956742,
+      "s1_name": "eastern agricultural",
+      "target_name": "eastern agricultural holdings",
+      "s1_addr": "3922 evergreen street east chicago in",
+      "target_addr": "3931 3933 evergreen street null east chicago indiana",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-703621451",
+      "target_id": "S3-138867230",
+      "probability": 0.5190451422653465,
+      "s1_name": "marketing st consultants pvt ltd",
+      "target_name": "marketing st consultants overseas pvt ltd",
+      "s1_addr": "312 314 vikas surya glaxy plot no 9 sector 4 dwarka new delhi west delhi delhi",
+      "target_addr": "312 325 new delhi dl",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-769252595",
+      "target_id": "S3-660681922",
+      "probability": 0.49481726262552783,
+      "s1_name": "dooars co",
+      "target_name": "dooars co group",
+      "s1_addr": "house no 93 4th floor right side khasra no 329 village sultanpur new delhi south delhi delhi",
+      "target_addr": "house no d 104 new delhi south delhi dl",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-74415806",
+      "target_id": "S2-931061717",
+      "probability": 0.9915636736915545,
+      "s1_name": "rb infraspace",
+      "target_name": "rb infraspace limited",
+      "s1_addr": "1421 gali kishan dutt maliwara nai sarak chandni chowk new delhi north delhi delhi",
+      "target_addr": "1421 gali kishan dutt maliwara nai sarak chandni chowk new delhi delhi",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-735523141",
+      "target_id": "S3-133552411",
+      "probability": 0.906465754596392,
+      "s1_name": "signature wireless brands corporation",
+      "target_name": "signature wireless brands corp",
+      "s1_addr": "ar 3 lafayette 124 lewisville",
+      "target_addr": "14 lafayette 124 null lewisville arkansas",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-466967863",
+      "target_id": "S2-428303125",
+      "probability": 0.7191935501558366,
+      "s1_name": "poly co",
+      "target_name": "poly holdings co",
+      "s1_addr": "first floor office no 101 sns arista opp happy residency vesu surat gujarat",
+      "target_addr": "no 4 first floor office no 101 sns arista opp happy residency vesu surat gujarat",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-570665070",
+      "target_id": "S3-528029163",
+      "probability": 0.8495016997823184,
+      "s1_name": "st church",
+      "target_name": "st church",
+      "s1_addr": "8100 pitter pat lane austin tx",
+      "target_addr": "1600 chatham ave austin texas",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-570665070",
+      "target_id": "S3-307371057",
+      "probability": 0.8495016997823184,
+      "s1_name": "st church",
+      "target_name": "st church",
+      "s1_addr": "8100 pitter pat lane austin tx",
+      "target_addr": "1600 chatham ave austin texas",
+      "s1_country": "US",
+      "target_country": "US"
+    },
+    {
+      "s1_id": "S1-296778217",
+      "target_id": "S3-537723453",
+      "probability": 0.6709358858214874,
+      "s1_name": "baba healthcare",
+      "target_name": "baba healthcare",
+      "s1_addr": "flat no 10 akash rekha sawarkar nagar gangapur nashik maharashtra",
+      "target_addr": "room no 10 789 malappuram malapuram \u0d15\u0d47\u0d30\u0d33\u0d02",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-728030881",
+      "target_id": "S2-234556967",
+      "probability": 0.8642882710090549,
+      "s1_name": "cfo foundation",
+      "target_name": "cfo foundation private limited",
+      "s1_addr": "kothari buildings 114 2nd floor mahatma gandhi salai nungambakkam chennai tamil nadu",
+      "target_addr": "\u0ba4\u0bae\u0bbf\u0bb4\u0bcd\u0ba8\u0bbe\u0b9f\u0bc1 no 40 kothari buildings 114 2nd floor mahatma gandhi salai nungambakkam chennai",
+      "s1_country": "INDIA",
+      "target_country": "INDIA"
+    },
+    {
+      "s1_id": "S1-305329775",
+      "target_id": "S2-939159184",
+      "probability": 0.5162333227096962,
+      "s1_name": "south cardiology",
+      "target_name": "south cardiology llc",
+      "s1_addr": "175 shady oaks road charlotte county va",
+      "target_addr": "charlotte court house 177c shady oaks road va",
+      "s1_country": "US",
+      "target_country": "US"
+    }
+  ],
+  "s1_to_s2_analysis": {
+    "source": "S2-",
+    "precision": 0.9760133333333333,
+    "recall": 0.6555666666666667,
+    "macro_f05": 0.7196376384038126,
+    "candidate_recall": 0.6294428434197886,
+    "avg_candidates_per_s1": 30.116,
+    "total_gt_matches": 4164,
+    "total_predicted_matches": 2620
+  },
+  "s1_to_s3_analysis": {
+    "source": "S3-",
+    "precision": 0.9685438095238096,
+    "recall": 0.6271666666666667,
+    "macro_f05": 0.7068328965118129,
+    "candidate_recall": 0.6128308658591296,
+    "avg_candidates_per_s1": 36.4024,
+    "total_gt_matches": 4458,
+    "total_predicted_matches": 2710
+  },
+  "match_count_analysis": {
+    "0": {
+      "entity_count": 151,
+      "percentage_of_val": 6.04,
+      "average_predicted_matches": 0.13245033112582782,
+      "recall": 1.0,
+      "precision": 0.8940397350993378,
+      "macro_f05": 0.8940397350993378
+    },
+    "1": {
+      "entity_count": 133,
+      "percentage_of_val": 5.319999999999999,
+      "average_predicted_matches": 0.7368421052631579,
+      "recall": 0.6240601503759399,
+      "precision": 0.9285714285714286,
+      "macro_f05": 0.5873015873015873
+    },
+    "2": {
+      "entity_count": 426,
+      "percentage_of_val": 17.04,
+      "average_predicted_matches": 1.2347417840375587,
+      "recall": 0.5727699530516432,
+      "precision": 0.9540297339593115,
+      "macro_f05": 0.6952082867575824
+    },
+    "3": {
+      "entity_count": 584,
+      "percentage_of_val": 23.36,
+      "average_predicted_matches": 1.8339041095890412,
+      "recall": 0.5799086757990867,
+      "precision": 0.9627853881278539,
+      "macro_f05": 0.7639156955322592
+    },
+    "4": {
+      "entity_count": 557,
+      "percentage_of_val": 22.28,
+      "average_predicted_matches": 2.459605026929982,
+      "recall": 0.5902154398563735,
+      "precision": 0.9691202872531417,
+      "macro_f05": 0.7913086688894589
+    },
+    "5+": {
+      "entity_count": 649,
+      "percentage_of_val": 25.96,
+      "average_predicted_matches": 3.4591679506933746,
+      "recall": 0.596381490449287,
+      "precision": 0.9779691589013623,
+      "macro_f05": 0.8129641171842261
+    }
+  }
+}

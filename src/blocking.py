@@ -9,7 +9,7 @@ import numpy as np
 
 def add_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Computes vectorized normalized blocking attributes.
+    Computes vectorized normalized blocking attributes with compound name+number keys.
     """
     return df.with_columns([
         pl.col("entity_id").alias("eid"),
@@ -21,14 +21,16 @@ def add_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
             r"\b(ltd|limited|pvt|private|corp|corporation|inc|incorporated|llc|llp|co|company|gmbh|sa|sarl|plc|bv|nv|assoc|associates|group|holdings|enterprises|services|solutions|technologies|international|consultants|industries|global|systems)\b",
             ""
         ).str.replace_all(r"\s+", "").alias("compact_name"),
-        pl.col("norm_name").str.split(" ").list.slice(0, 2).list.join("_").alias("first2_words"),
-        pl.col("norm_addr").str.extract_all(r"\b\d+\b").alias("addr_nums"),
+        pl.col("norm_name").str.split(" ").list.slice(0, 2).list.join("_").alias("f2_name"),
+        pl.col("norm_addr").str.extract(r"(\d+)", 1).alias("first_addr_num"),
     ]).with_columns([
-        pl.col("compact_name").str.slice(0, 10).alias("cname_pref10"),
-        pl.when(pl.col("addr_nums").list.len() >= 2).then(
-            pl.concat_str([pl.col("addr_nums").list.get(0), pl.lit("_"), pl.col("addr_nums").list.get(1)])
-        ).otherwise(None).alias("num2_str")
-    ])
+        pl.when(pl.col("first_addr_num").is_not_null()).then(
+            pl.concat_str([pl.col("compact_name").str.slice(0, 8), pl.lit("_"), pl.col("first_addr_num")])
+        ).otherwise(None).alias("cname8_num"),
+        pl.when(pl.col("first_addr_num").is_not_null()).then(
+            pl.concat_str([pl.col("f2_name"), pl.lit("_"), pl.col("first_addr_num")])
+        ).otherwise(None).alias("f2_num")
+    ]).drop(["first_addr_num"])
 
 def generate_candidates_for_targets(
     s1_prep_df: pl.DataFrame,
@@ -36,34 +38,30 @@ def generate_candidates_for_targets(
     max_cands_per_s1: int = 40
 ) -> pl.DataFrame:
     """
-    Generates candidate pairs between S1 and a target source using pre-filtered union of blocking keys.
+    Generates candidate pairs between S1 and a target source using non-explosive compound keys.
     """
     # 1. Exact compact name + country
-    s1_cnames = s1_prep_df.filter(pl.col("compact_name").str.len_chars() >= 3)["compact_name"].unique()
-    j1 = s1_prep_df.filter(pl.col("compact_name").str.len_chars() >= 3).join(
-        target_prep_df.filter(pl.col("compact_name").is_in(s1_cnames)),
+    j1 = s1_prep_df.filter(pl.col("compact_name").str.len_chars() >= 3).select(["eid", "compact_name", "country"]).join(
+        target_prep_df.filter(pl.col("compact_name").str.len_chars() >= 3).select(["eid", "compact_name", "country"]),
         on=["compact_name", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
     # 2. Exact normalized name + country
-    s1_norms = s1_prep_df.filter(pl.col("norm_name").str.len_chars() >= 4)["norm_name"].unique()
-    j2 = s1_prep_df.filter(pl.col("norm_name").str.len_chars() >= 4).join(
-        target_prep_df.filter(pl.col("norm_name").is_in(s1_norms)),
+    j2 = s1_prep_df.filter(pl.col("norm_name").str.len_chars() >= 4).select(["eid", "norm_name", "country"]).join(
+        target_prep_df.filter(pl.col("norm_name").str.len_chars() >= 4).select(["eid", "norm_name", "country"]),
         on=["norm_name", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
-    # 3. First 2 words + country
-    s1_f2 = s1_prep_df.filter(pl.col("first2_words").str.len_chars() >= 6)["first2_words"].unique()
-    j3 = s1_prep_df.filter(pl.col("first2_words").str.len_chars() >= 6).join(
-        target_prep_df.filter(pl.col("first2_words").is_in(s1_f2)),
-        on=["first2_words", "country"]
+    # 3. Compact Name Prefix (8) + First Address Number + Country
+    j3 = s1_prep_df.filter(pl.col("cname8_num").is_not_null()).select(["eid", "cname8_num", "country"]).join(
+        target_prep_df.filter(pl.col("cname8_num").is_not_null()).select(["eid", "cname8_num", "country"]),
+        on=["cname8_num", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
-    # 4. Address 2-numbers key + country
-    s1_nums = s1_prep_df.filter(pl.col("num2_str").is_not_null())["num2_str"].unique()
-    j4 = s1_prep_df.filter(pl.col("num2_str").is_not_null()).join(
-        target_prep_df.filter(pl.col("num2_str").is_in(s1_nums)),
-        on=["num2_str", "country"]
+    # 4. First 2 Words + First Address Number + Country
+    j4 = s1_prep_df.filter(pl.col("f2_num").is_not_null()).select(["eid", "f2_num", "country"]).join(
+        target_prep_df.filter(pl.col("f2_num").is_not_null()).select(["eid", "f2_num", "country"]),
+        on=["f2_num", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
     # Union and limit per S1 entity

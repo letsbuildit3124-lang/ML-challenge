@@ -19,116 +19,136 @@ def run_test_inference(
     config: Config,
     model: ERModel,
     threshold: float,
-    batch_size: int = 500000
+    s1_chunk_size: int = 200000
 ) -> Tuple[str, str]:
     """
-    Executes end-to-end inference on the official test set sequentially.
+    Executes end-to-end inference on the official test set in streaming memory-safe chunks.
     """
     print("=" * 70, flush=True)
     print("PHASE: TEST SET INFERENCE", flush=True)
     print("=" * 70, flush=True)
     print(f"Applying frozen decision threshold: {threshold:.4f}", flush=True)
 
-    # 1. Load Test S1
-    print("\nLoading Test Source 1...", flush=True)
-    t0 = time.time()
-    test_s1_df = load_source_file(config.test_s1_path, expected_prefix="S1-")
-    all_test_s1_ids = test_s1_df["entity_id"].to_list()
-    total_test_s1 = len(all_test_s1_ids)
-    print(f"Loaded {total_test_s1:,} Test S1 entities in {time.time() - t0:.2f}s", flush=True)
+    start_time = time.time()
 
-    test_s1_p = add_blocking_columns(test_s1_df)
-    s1_records = extract_record_dict_from_df(test_s1_p)
-    del test_s1_df
-    gc.collect()
-
-    candidate_tables = []
-    target_records: Dict[str, Dict[str, Any]] = {}
-
-    # 2. Block against Test S2
-    print("\nLoading and Blocking against Test Source 2...", flush=True)
+    # 1. Load and prepare S2 and S3 tables
+    print("\nLoading and preparing Test Source 2...", flush=True)
     t0 = time.time()
     test_s2_df = load_source_file(config.test_s2_path, expected_prefix="S2-")
     test_s2_p = add_blocking_columns(test_s2_df)
     del test_s2_df
     gc.collect()
+    print(f"Loaded and indexed {len(test_s2_p):,} Test S2 entities in {time.time() - t0:.2f}s", flush=True)
 
-    pairs_s2 = generate_candidates_for_targets(test_s1_p, test_s2_p, max_cands_per_s1=config.max_total_cands_per_s1 // 2 + 5)
-    candidate_tables.append(pairs_s2)
-
-    needed_s2 = set(pairs_s2["target_id"].to_list())
-    print(f"Test S2 Blocking: {len(pairs_s2):,} candidate pairs in {time.time() - t0:.2f}s. Extracting {len(needed_s2):,} active S2 records...", flush=True)
-    
-    s2_matched = test_s2_p.filter(pl.col("eid").is_in(list(needed_s2)))
-    target_records.update(extract_record_dict_from_df(s2_matched))
-
-    del test_s2_p, s2_matched, pairs_s2
-    gc.collect()
-
-    # 3. Block against Test S3
-    print("\nLoading and Blocking against Test Source 3...", flush=True)
+    print("\nLoading and preparing Test Source 3...", flush=True)
     t0 = time.time()
     test_s3_df = load_source_file(config.test_s3_path, expected_prefix="S3-")
     test_s3_p = add_blocking_columns(test_s3_df)
     del test_s3_df
     gc.collect()
+    print(f"Loaded and indexed {len(test_s3_p):,} Test S3 entities in {time.time() - t0:.2f}s", flush=True)
 
-    pairs_s3 = generate_candidates_for_targets(test_s1_p, test_s3_p, max_cands_per_s1=config.max_total_cands_per_s1 // 2 + 5)
-    candidate_tables.append(pairs_s3)
+    # 2. Load and prepare S1
+    print("\nLoading and preparing Test Source 1...", flush=True)
+    t0 = time.time()
+    test_s1_df = load_source_file(config.test_s1_path, expected_prefix="S1-")
+    all_test_s1_ids = test_s1_df["entity_id"].to_list()
+    total_test_s1 = len(all_test_s1_ids)
+    test_s1_p = add_blocking_columns(test_s1_df)
+    del test_s1_df
+    gc.collect()
+    print(f"Loaded and indexed {total_test_s1:,} Test S1 entities in {time.time() - t0:.2f}s", flush=True)
 
-    needed_s3 = set(pairs_s3["target_id"].to_list())
-    print(f"Test S3 Blocking: {len(pairs_s3):,} candidate pairs in {time.time() - t0:.2f}s. Extracting {len(needed_s3):,} active S3 records...", flush=True)
+    # Global tracking dictionaries
+    matching_map: Dict[str, List[str]] = {s1_id: [] for s1_id in all_test_s1_ids}
+    candidate_map: Dict[str, List[str]] = {s1_id: [] for s1_id in all_test_s1_ids}
 
-    s3_matched = test_s3_p.filter(pl.col("eid").is_in(list(needed_s3)))
-    target_records.update(extract_record_dict_from_df(s3_matched))
+    # 3. Process S1 in chunks
+    num_chunks = (total_test_s1 + s1_chunk_size - 1) // s1_chunk_size
+    print(f"\nProcessing {total_test_s1:,} Test S1 entities across {num_chunks} chunks...", flush=True)
 
-    del test_s3_p, s3_matched, pairs_s3, test_s1_p
+    total_candidates_found = 0
+    total_matches_found = 0
+
+    for c_idx in range(num_chunks):
+        c_start = c_idx * s1_chunk_size
+        c_len = min(s1_chunk_size, total_test_s1 - c_start)
+        t_chunk = time.time()
+
+        s1_chunk_p = test_s1_p.slice(c_start, c_len)
+        s1_chunk_records = extract_record_dict_from_df(s1_chunk_p)
+
+        # Block against S2 and S3 for this chunk
+        pairs_s2 = generate_candidates_for_targets(
+            s1_chunk_p, test_s2_p, max_cands_per_s1=config.max_total_cands_per_s1 // 2 + 5
+        )
+        pairs_s3 = generate_candidates_for_targets(
+            s1_chunk_p, test_s3_p, max_cands_per_s1=config.max_total_cands_per_s1 // 2 + 5
+        )
+
+        cand_pairs_df = pl.concat([pairs_s2, pairs_s3]).unique()
+        chunk_cand_count = len(cand_pairs_df)
+        total_candidates_found += chunk_cand_count
+
+        if chunk_cand_count > 0:
+            # Separate active S2 and S3 target IDs
+            s2_cand_ids = [t for t in cand_pairs_df["target_id"].to_list() if t.startswith("S2-")]
+            s3_cand_ids = [t for t in cand_pairs_df["target_id"].to_list() if t.startswith("S3-")]
+
+            target_records: Dict[str, Dict[str, Any]] = {}
+            if s2_cand_ids:
+                s2_matched = test_s2_p.filter(pl.col("eid").is_in(list(set(s2_cand_ids))))
+                target_records.update(extract_record_dict_from_df(s2_matched))
+                del s2_matched
+
+            if s3_cand_ids:
+                s3_matched = test_s3_p.filter(pl.col("eid").is_in(list(set(s3_cand_ids))))
+                target_records.update(extract_record_dict_from_df(s3_matched))
+                del s3_matched
+
+            # Build candidate list and compute pairwise features
+            cand_rows = cand_pairs_df.to_dict(as_series=False)
+            s1_col = cand_rows["s1_id"]
+            tgt_col = cand_rows["target_id"]
+
+            chunk_feats = []
+            chunk_pairs = []
+
+            for s1_id, cand_id in zip(s1_col, tgt_col):
+                candidate_map[s1_id].append(cand_id)
+                if s1_id in s1_chunk_records and cand_id in target_records:
+                    f = compute_pairwise_features(s1_chunk_records[s1_id], target_records[cand_id], cand_id)
+                    chunk_feats.append(f)
+                    chunk_pairs.append((s1_id, cand_id))
+
+            # LightGBM scoring
+            if chunk_feats:
+                X_chunk = np.array(chunk_feats, dtype=np.float32)
+                probs = model.predict_proba(X_chunk)
+                chunk_match_count = 0
+                for (s1_id, cand_id), prob in zip(chunk_pairs, probs):
+                    if prob >= threshold:
+                        matching_map[s1_id].append(cand_id)
+                        chunk_match_count += 1
+                total_matches_found += chunk_match_count
+
+            del target_records, chunk_feats, chunk_pairs
+
+        del s1_chunk_p, s1_chunk_records, pairs_s2, pairs_s3, cand_pairs_df
+        gc.collect()
+
+        print(
+            f"  [Chunk {c_idx + 1:02d}/{num_chunks:02d}] S1: {c_start + c_len:,}/{total_test_s1:,} | "
+            f"Candidates: {chunk_cand_count:,} | Chunk matches: {total_matches_found:,} total | "
+            f"Time: {time.time() - t_chunk:.2f}s",
+            flush=True
+        )
+
+    # Free large tables
+    del test_s1_p, test_s2_p, test_s3_p
     gc.collect()
 
-    # 4. Combine all candidate pairs
-    cand_pairs_df = pl.concat(candidate_tables).unique()
-    print(f"\nTotal Test Candidate Pairs: {len(cand_pairs_df):,} (Avg: {len(cand_pairs_df)/total_test_s1:.2f}/S1)", flush=True)
-
-    # 5. Build candidate map
-    candidate_map: Dict[str, List[str]] = {s1_id: [] for s1_id in all_test_s1_ids}
-    for row in cand_pairs_df.iter_rows():
-        candidate_map[str(row[0])].append(str(row[1]))
-
-    # 6. Score candidate pairs with model
-    print(f"\nScoring {len(cand_pairs_df):,} candidate pairs in batches of {batch_size:,}...", flush=True)
-    
-    matching_map: Dict[str, List[str]] = {s1_id: [] for s1_id in all_test_s1_ids}
-    total_pairs = len(cand_pairs_df)
-    num_batches = (total_pairs + batch_size - 1) // batch_size
-    
-    start_time = time.time()
-    
-    for b_idx in range(num_batches):
-        b_start = b_idx * batch_size
-        b_end = min(b_start + batch_size, total_pairs)
-        batch_slice = cand_pairs_df.slice(b_start, b_end - b_start)
-        
-        batch_feats = []
-        batch_pairs = []
-        
-        for row in batch_slice.iter_rows():
-            s1_id, cand_id = str(row[0]), str(row[1])
-            if s1_id in s1_records and cand_id in target_records:
-                feats = compute_pairwise_features(s1_records[s1_id], target_records[cand_id], cand_id)
-                batch_feats.append(feats)
-                batch_pairs.append((s1_id, cand_id))
-
-        if batch_feats:
-            X_batch = np.array(batch_feats, dtype=np.float32)
-            probs = model.predict_proba(X_batch)
-            
-            for (s1_id, cand_id), prob in zip(batch_pairs, probs):
-                if prob >= threshold:
-                    matching_map[s1_id].append(cand_id)
-
-        print(f"  Batch {b_idx + 1}/{num_batches} scored ({b_end:,}/{total_pairs:,} pairs) - Elapsed: {time.time() - start_time:.1f}s", flush=True)
-
-    # 7. Write deliverables
+    # 4. Write deliverables
     print("\nWriting official deliverables to output/ ...", flush=True)
     match_path, cand_path = write_submission_files(config, all_test_s1_ids, matching_map, candidate_map)
 
