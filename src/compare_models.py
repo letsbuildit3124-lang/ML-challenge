@@ -31,8 +31,11 @@ def run_model_comparison():
 
     # 1. Load Data
     t_start = time.time()
-    s1_df = load_source_file(config.train_s1_path, expected_prefix="S1-")
-    gt_df = load_ground_truth(config.train_gt_path)
+    total_requested = config.train_sample_s1_count + config.val_sample_s1_count
+    
+    # Load only the required sample of S1 rows for validation benchmark
+    s1_df = load_source_file(config.train_s1_path, expected_prefix="S1-", n_rows=total_requested * 2)
+    gt_df = load_ground_truth(config.train_gt_path, n_rows=total_requested * 2)
 
     # Ground Truth Mapping
     gt_map: Dict[str, List[str]] = {}
@@ -40,15 +43,15 @@ def run_model_comparison():
         s1_id = str(row[0])
         m_str = str(row[1]) if row[1] is not None else ""
         gt_map[s1_id] = [x.strip() for x in m_str.split(",") if x.strip()]
+    del gt_df
+    gc.collect()
 
     # Deterministic S1 split (Seed 42)
     all_s1_ids = list(s1_df["entity_id"].to_list())
     random.seed(config.seed)
     random.shuffle(all_s1_ids)
 
-    total_requested = config.train_sample_s1_count + config.val_sample_s1_count
     selected_s1_ids = all_s1_ids[:total_requested]
-
     split_idx = config.train_sample_s1_count
     train_s1_ids = set(selected_s1_ids[:split_idx])
     val_s1_ids = set(selected_s1_ids[split_idx:total_requested])
@@ -69,13 +72,13 @@ def run_model_comparison():
     s1_records = extract_record_dict_from_df(s1_p)
     target_records: Dict[str, Dict[str, Any]] = {}
 
-    # 2. Block against S2 in memory-safe streaming chunks
-    print("\nStreaming and Blocking against Train Source 2 in chunks of 250k rows...", flush=True)
+    # 2. Block against S2 in memory-safe streaming chunks of 100k
+    print("\nStreaming and Blocking against Train Source 2 in chunks of 100k rows...", flush=True)
     t0 = time.time()
     cands_s2, records_s2 = block_s1_against_target_file_chunked(
         s1_p,
         config.train_s2_path,
-        target_chunk_size=250000,
+        target_chunk_size=100000,
         max_cands_per_s1=40,
         extract_matched_records=True
     )
@@ -84,13 +87,13 @@ def run_model_comparison():
     gc.collect()
     print(f"S2 Blocking complete in {time.time() - t0:.2f}s (Found {len(cands_s2):,} S2 candidate pairs)", flush=True)
 
-    # 3. Block against S3 in memory-safe streaming chunks
-    print("\nStreaming and Blocking against Train Source 3 in chunks of 250k rows...", flush=True)
+    # 3. Block against S3 in memory-safe streaming chunks of 100k
+    print("\nStreaming and Blocking against Train Source 3 in chunks of 100k rows...", flush=True)
     t0 = time.time()
     cands_s3, records_s3 = block_s1_against_target_file_chunked(
         s1_p,
         config.train_s3_path,
-        target_chunk_size=250000,
+        target_chunk_size=100000,
         max_cands_per_s1=40,
         extract_matched_records=True
     )

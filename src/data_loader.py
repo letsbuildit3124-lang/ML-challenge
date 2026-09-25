@@ -47,32 +47,50 @@ def load_source_file(
 
 def iter_source_file_chunks(
     file_path: str,
-    chunk_size: int = 250000,
+    chunk_size: int = 100000,
     expected_prefix: Optional[str] = None
 ) -> Generator[pl.DataFrame, None, None]:
     """
-    Streams a source TSV file in memory-safe chunks using Polars batched reader.
-    Keeps memory footprint strictly low on resource-constrained servers.
+    Streams a TSV file in sequential memory-safe chunks of `chunk_size` rows.
+    Uses pure file streaming to strictly avoid large memory mappings or RAM spikes.
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Source file not found at: {file_path}")
 
-    reader = pl.read_csv_batched(
-        file_path,
-        separator="\t",
-        batch_size=chunk_size,
-        truncate_ragged_lines=True,
-        null_values=["", "NULL", "null", "None", "NaN"]
-    )
+    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        header_line = f.readline()
+        if not header_line:
+            return
+        headers = [h.strip() for h in header_line.split("\t")]
+        
+        batch_rows = []
+        for line in f:
+            line_str = line.strip("\r\n")
+            if not line_str:
+                continue
+            parts = line_str.split("\t")
+            # Pad or truncate to match header length
+            if len(parts) < len(headers):
+                parts.extend([""] * (len(headers) - len(parts)))
+            elif len(parts) > len(headers):
+                parts = parts[:len(headers)]
+            batch_rows.append(parts)
 
-    while True:
-        batches = reader.next_batches(1)
-        if not batches:
-            break
-        chunk = batches[0]
-        if len(chunk) == 0:
-            break
-        yield chunk
+            if len(batch_rows) >= chunk_size:
+                # Convert to Polars DataFrame
+                col_data = {headers[i]: [r[i] for r in batch_rows] for i in range(len(headers))}
+                chunk_df = pl.DataFrame(col_data)
+                del batch_rows, col_data
+                yield chunk_df
+                batch_rows = []
+                gc.collect()
+
+        if batch_rows:
+            col_data = {headers[i]: [r[i] for r in batch_rows] for i in range(len(headers))}
+            chunk_df = pl.DataFrame(col_data)
+            del batch_rows, col_data
+            yield chunk_df
+            gc.collect()
 
 def load_ground_truth(file_path: str, n_rows: Optional[int] = None) -> pl.DataFrame:
     """
