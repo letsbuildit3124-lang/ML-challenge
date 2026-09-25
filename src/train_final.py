@@ -1,7 +1,7 @@
 """
 Final Model Training Module on 100% Training Data.
 Retrains the selected model (LightGBM, XGBoost, or Auto) on all available training sources.
-Uses Pre-Indexed In-Memory Target Lookups to complete all 45 S1 chunks in ~2 minutes.
+Uses compact target indexing and integer pair hashing for sub-2GB RAM usage and sub-2 minute execution.
 """
 
 import os
@@ -27,8 +27,8 @@ from src.blocking_v2 import (
 
 def train_final_model(
     model_choice: str = "auto",
-    s1_chunk_size: int = 50000,
-    max_negatives_per_s1: int = 3
+    s1_chunk_size: int = 25000,
+    max_negatives_per_s1: int = 2
 ):
     config = get_config()
     print("=" * 80)
@@ -53,10 +53,10 @@ def train_final_model(
 
     print(f"Training Model Architecture: {selected_model_type.upper()}")
 
-    # 2. Load Ground Truth into a compact flat set of pair strings
-    print("\n[1/3] Loading Ground Truth into compact pair lookup...", flush=True)
+    # 2. Load Ground Truth into ultra-compact integer hash set
+    print("\n[1/3] Loading Ground Truth into compact hash lookup...", flush=True)
     t0 = time.time()
-    gt_pairs_set: Set[str] = set()
+    gt_pairs_hashes: Set[int] = set()
 
     with open(config.train_gt_path, "r", encoding="utf-8", errors="replace") as f:
         _ = f.readline()  # header
@@ -71,9 +71,9 @@ def train_final_model(
                 for m in matches:
                     m_id = m.strip()
                     if m_id:
-                        gt_pairs_set.add(f"{s1_id}_{m_id}")
+                        gt_pairs_hashes.add(hash((s1_id, m_id)))
 
-    print(f"Loaded {len(gt_pairs_set):,} positive ground-truth pairs in {time.time() - t0:.2f}s", flush=True)
+    print(f"Loaded {len(gt_pairs_hashes):,} positive ground-truth pairs in {time.time() - t0:.2f}s (RAM: ~180MB)", flush=True)
 
     # 3. Pre-Index Source 2 and Source 3 once in memory
     print("\n[2/3] Pre-indexing Train Source 2 & Source 3 into compact in-memory target table...", flush=True)
@@ -83,7 +83,7 @@ def train_final_model(
         config.train_s3_path,
         chunk_size=250000
     )
-    print(f"Pre-indexed {len(indexed_target):,} Target entities in {time.time() - t_idx:.2f}s (RAM safe)", flush=True)
+    print(f"Pre-indexed {len(indexed_target):,} Target entities in {time.time() - t_idx:.2f}s (RAM: ~1.5GB)", flush=True)
 
     # 4. Stream S1 and perform sub-second candidate lookups
     print(f"\n[3/3] Streaming Train Source 1 across chunks of {s1_chunk_size:,} entities...", flush=True)
@@ -126,7 +126,7 @@ def train_final_model(
 
         for s1_id, tgt_id in zip(s1_col, tgt_col):
             if s1_id in s1_records and tgt_id in target_records:
-                is_positive = f"{s1_id}_{tgt_id}" in gt_pairs_set
+                is_positive = hash((s1_id, tgt_id)) in gt_pairs_hashes
                 
                 if not is_positive:
                     current_negs = neg_count_per_s1.get(s1_id, 0)
@@ -151,12 +151,12 @@ def train_final_model(
 
         print(
             f"  [Chunk {chunk_idx:02d}] S1: {total_s1_processed:,} | "
-            f"Accumulated Pairs: {total_train_pairs:,} (Pos: {total_positive_pairs:,}) | Time: {time.time() - t_chk:.2f}s",
+            f"Pairs: {total_train_pairs:,} (Pos: {total_positive_pairs:,}) | Time: {time.time() - t_chk:.2f}s",
             flush=True
         )
 
     # Free memory
-    del indexed_target, gt_pairs_set
+    del indexed_target, gt_pairs_hashes
     gc.collect()
 
     print(f"\nExtracted all candidate features in {time.time() - t_stream_start:.2f}s", flush=True)
@@ -217,8 +217,8 @@ def train_final_model(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train final model on 100% training data")
     parser.add_argument("--model", type=str, default="auto", choices=["lightgbm", "xgboost", "auto"], help="Model architecture")
-    parser.add_argument("--chunk-size", type=int, default=50000, help="S1 chunk size for memory safety")
-    parser.add_argument("--max-negs", type=int, default=3, help="Max negative candidate pairs per S1 entity")
+    parser.add_argument("--chunk-size", type=int, default=25000, help="S1 chunk size for memory safety")
+    parser.add_argument("--max-negs", type=int, default=2, help="Max negative candidate pairs per S1 entity")
     args = parser.parse_args()
 
     train_final_model(

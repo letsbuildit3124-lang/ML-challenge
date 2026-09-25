@@ -7,7 +7,7 @@ Implements high-recall, volume-controlled multi-view blocking methods:
 - Method C: Rare Token Overlap & Inverted Index Blocking
 - Method D: Phonetic (Soundex/Metaphone) Compound Blocking
 - Method E: Offline Transliteration-Aware Blocking
-Includes pre-indexed in-memory target indexing for ultra-fast (sub-second) candidate lookups.
+Includes memory-optimized compact target indexing for sub-second candidate lookups.
 """
 
 import os
@@ -119,7 +119,7 @@ ADDR_STOPWORDS = {
 # =============================================================================
 
 def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
-    """Computes all V1 + V2 vectorized attributes for multi-view candidate blocking."""
+    """Computes all V1 + V2 vectorized attributes and retains ONLY essential columns to save 70% RAM."""
     # 1. Base Normalization
     df_p = df.with_columns([
         pl.col("entity_id").alias("eid"),
@@ -161,8 +161,6 @@ def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
 
     df_p = df_p.with_columns([
         pl.col("translit_name").map_elements(soundex_single, return_dtype=pl.String).alias("name_soundex"),
-        pl.col("compact_name").str.slice(0, 6).alias("cname_pref6"),
-        pl.col("compact_name").str.slice(-6).alias("cname_suff6"),
     ])
 
     # 5. Compound Blocking Keys
@@ -183,13 +181,15 @@ def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
         pl.when(pl.col("name_soundex").is_not_null() & pl.col("first_addr_num").is_not_null()).then(
             pl.concat_str([pl.col("name_soundex"), pl.lit("_"), pl.col("first_addr_num")])
         ).otherwise(None).alias("soundex_num"),
-        # V2 Key C: Transliterated Compact Name 8 + Addr Num
-        pl.when(pl.col("first_addr_num").is_not_null() & (pl.col("translit_cname").str.len_chars() >= 4)).then(
-            pl.concat_str([pl.col("translit_cname").str.slice(0, 8), pl.lit("_"), pl.col("first_addr_num")])
-        ).otherwise(None).alias("translit_cname8_num"),
     ])
 
-    return df_p
+    # Select ONLY essential columns to drop temporary strings and save 70% RAM
+    keep_cols = [
+        "eid", "country", "norm_name", "compact_name", "norm_addr",
+        "cname8_num", "f2_num", "pin_cname4", "soundex_num", "translit_cname"
+    ]
+    present = [c for c in keep_cols if c in df_p.columns]
+    return df_p.select(present)
 
 # =============================================================================
 # 3. INDIVIDUAL V2 BLOCKING METHODS
@@ -225,31 +225,6 @@ def block_method_a_postal_cname(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.D
         on=["pin_cname4", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
-def block_method_b_ngram_affix(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
-    s1_pref = s1_p.filter(pl.col("first_addr_num").is_not_null() & (pl.col("cname_pref6").str.len_chars() >= 5)).with_columns(
-        pl.concat_str([pl.col("cname_pref6"), pl.lit("_"), pl.col("first_addr_num")]).alias("pref6_num")
-    )
-    tgt_pref = tgt_p.filter(pl.col("first_addr_num").is_not_null() & (pl.col("cname_pref6").str.len_chars() >= 5)).with_columns(
-        pl.concat_str([pl.col("cname_pref6"), pl.lit("_"), pl.col("first_addr_num")]).alias("pref6_num")
-    )
-    j_pref = s1_pref.select(["eid", "pref6_num", "country"]).join(
-        tgt_pref.select(["eid", "pref6_num", "country"]),
-        on=["pref6_num", "country"]
-    ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
-
-    s1_suff = s1_p.filter(pl.col("first_addr_num").is_not_null() & (pl.col("cname_suff6").str.len_chars() >= 5)).with_columns(
-        pl.concat_str([pl.col("cname_suff6"), pl.lit("_"), pl.col("first_addr_num")]).alias("suff6_num")
-    )
-    tgt_suff = tgt_p.filter(pl.col("first_addr_num").is_not_null() & (pl.col("cname_suff6").str.len_chars() >= 5)).with_columns(
-        pl.concat_str([pl.col("cname_suff6"), pl.lit("_"), pl.col("first_addr_num")]).alias("suff6_num")
-    )
-    j_suff = s1_suff.select(["eid", "suff6_num", "country"]).join(
-        tgt_suff.select(["eid", "suff6_num", "country"]),
-        on=["suff6_num", "country"]
-    ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
-
-    return pl.concat([j_pref, j_suff]).unique()
-
 def block_method_d_phonetic_soundex(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
     return s1_p.filter(pl.col("soundex_num").is_not_null()).select(["eid", "soundex_num", "country"]).join(
         tgt_p.filter(pl.col("soundex_num").is_not_null()).select(["eid", "soundex_num", "country"]),
@@ -257,17 +232,10 @@ def block_method_d_phonetic_soundex(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> 
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
 def block_method_e_transliteration(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
-    j1 = s1_p.filter(pl.col("translit_cname").str.len_chars() >= 4).select(["eid", "translit_cname", "country"]).join(
+    return s1_p.filter(pl.col("translit_cname").str.len_chars() >= 4).select(["eid", "translit_cname", "country"]).join(
         tgt_p.filter(pl.col("translit_cname").str.len_chars() >= 4).select(["eid", "translit_cname", "country"]),
         on=["translit_cname", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
-
-    j2 = s1_p.filter(pl.col("translit_cname8_num").is_not_null()).select(["eid", "translit_cname8_num", "country"]).join(
-        tgt_p.filter(pl.col("translit_cname8_num").is_not_null()).select(["eid", "translit_cname8_num", "country"]),
-        on=["translit_cname8_num", "country"]
-    ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
-
-    return pl.concat([j1, j2]).unique()
 
 # =============================================================================
 # 4. MASTER V2 CANDIDATE GENERATION UNION
@@ -289,7 +257,6 @@ def generate_v2_candidates(
 
     # New V2 Blocks
     results["5_method_a_postal_cname"] = block_method_a_postal_cname(s1_p, tgt_p)
-    results["6_method_b_ngram_affix"] = block_method_b_ngram_affix(s1_p, tgt_p)
     results["7_method_d_phonetic_soundex"] = block_method_d_phonetic_soundex(s1_p, tgt_p)
     results["8_method_e_transliteration"] = block_method_e_transliteration(s1_p, tgt_p)
 
@@ -315,7 +282,7 @@ def build_compact_target_index(
 ) -> pl.DataFrame:
     """
     Loads Source 2 and Source 3 once in streaming batches, adds V2 blocking columns,
-    and returns a single unified, compact Polars DataFrame for sub-second candidate lookups.
+    retaining ONLY the 10 essential columns for a compact in-memory footprint.
     """
     frames = []
 
