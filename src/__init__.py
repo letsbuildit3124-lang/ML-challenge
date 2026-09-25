@@ -1,3 +1,0 @@
-"""
-Business Entity Resolution package.
-"""
