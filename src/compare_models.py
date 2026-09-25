@@ -1,6 +1,7 @@
 """
 Model Comparison Module for Entity Resolution.
 Trains and compares LightGBM vs XGBoost on the exact same V2 candidate pool and 29 features.
+Uses memory-safe chunked target streaming to run reliably on 2 CPU / 8 GB RAM EC2 instances.
 Finds the optimal validation threshold for both models, records metrics, and selects the winner.
 """
 
@@ -19,7 +20,7 @@ from src.dataset_builder import extract_record_dict_from_df
 from src.features import compute_pairwise_features
 from src.evaluation import evaluate_predictions
 from src.model import LightGBMERModel, XGBoostERModel
-from src.blocking_v2 import add_v2_blocking_columns, generate_v2_candidates
+from src.blocking_v2 import add_v2_blocking_columns, block_s1_against_target_file_chunked
 
 
 def run_model_comparison():
@@ -65,57 +66,44 @@ def run_model_comparison():
     gc.collect()
 
     s1_p = add_v2_blocking_columns(s1_sub_df)
-    train_s1_p = s1_p.filter(pl.col("eid").is_in(list(train_s1_ids)))
-    val_s1_p = s1_p.filter(pl.col("eid").is_in(list(val_s1_ids)))
     s1_records = extract_record_dict_from_df(s1_p)
-
     target_records: Dict[str, Dict[str, Any]] = {}
-    train_cands_list = []
-    val_cands_list = []
 
-    # 2. Block against S2
-    print("\nLoading and Blocking against Train Source 2...", flush=True)
+    # 2. Block against S2 in memory-safe streaming chunks
+    print("\nStreaming and Blocking against Train Source 2 in chunks of 250k rows...", flush=True)
     t0 = time.time()
-    s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-")
-    s2_p = add_v2_blocking_columns(s2_df)
-    del s2_df
+    cands_s2, records_s2 = block_s1_against_target_file_chunked(
+        s1_p,
+        config.train_s2_path,
+        target_chunk_size=250000,
+        max_cands_per_s1=40,
+        extract_matched_records=True
+    )
+    target_records.update(records_s2)
+    del records_s2
     gc.collect()
+    print(f"S2 Blocking complete in {time.time() - t0:.2f}s (Found {len(cands_s2):,} S2 candidate pairs)", flush=True)
 
-    tr_s2 = generate_v2_candidates(train_s1_p, s2_p, max_cands_per_s1=40)["union"]
-    va_s2 = generate_v2_candidates(val_s1_p, s2_p, max_cands_per_s1=40)["union"]
-    train_cands_list.append(tr_s2)
-    val_cands_list.append(va_s2)
-
-    needed_s2 = set(tr_s2["target_id"].to_list()) | set(va_s2["target_id"].to_list())
-    s2_matched = s2_p.filter(pl.col("eid").is_in(list(needed_s2)))
-    target_records.update(extract_record_dict_from_df(s2_matched))
-    del s2_p, s2_matched, tr_s2, va_s2
-    gc.collect()
-    print(f"S2 Blocking & record extraction complete in {time.time() - t0:.2f}s", flush=True)
-
-    # 3. Block against S3
-    print("\nLoading and Blocking against Train Source 3...", flush=True)
+    # 3. Block against S3 in memory-safe streaming chunks
+    print("\nStreaming and Blocking against Train Source 3 in chunks of 250k rows...", flush=True)
     t0 = time.time()
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
-    s3_p = add_v2_blocking_columns(s3_df)
-    del s3_df
+    cands_s3, records_s3 = block_s1_against_target_file_chunked(
+        s1_p,
+        config.train_s3_path,
+        target_chunk_size=250000,
+        max_cands_per_s1=40,
+        extract_matched_records=True
+    )
+    target_records.update(records_s3)
+    del records_s3
     gc.collect()
+    print(f"S3 Blocking complete in {time.time() - t0:.2f}s (Found {len(cands_s3):,} S3 candidate pairs)", flush=True)
 
-    tr_s3 = generate_v2_candidates(train_s1_p, s3_p, max_cands_per_s1=40)["union"]
-    va_s3 = generate_v2_candidates(val_s1_p, s3_p, max_cands_per_s1=40)["union"]
-    train_cands_list.append(tr_s3)
-    val_cands_list.append(va_s3)
+    # 4. Candidate pairs union and split
+    all_cand_df = pl.concat([cands_s2, cands_s3]).unique()
+    train_cand_df = all_cand_df.filter(pl.col("s1_id").is_in(list(train_s1_ids)))
+    val_cand_df = all_cand_df.filter(pl.col("s1_id").is_in(list(val_s1_ids)))
 
-    needed_s3 = set(tr_s3["target_id"].to_list()) | set(va_s3["target_id"].to_list())
-    s3_matched = s3_p.filter(pl.col("eid").is_in(list(needed_s3)))
-    target_records.update(extract_record_dict_from_df(s3_matched))
-    del s3_p, s3_matched, tr_s3, va_s3
-    gc.collect()
-    print(f"S3 Blocking & record extraction complete in {time.time() - t0:.2f}s", flush=True)
-
-    # 4. Candidate pairs union
-    train_cand_df = pl.concat(train_cands_list).unique()
-    val_cand_df = pl.concat(val_cands_list).unique()
     print(f"\nGenerated {len(train_cand_df):,} Train candidate pairs and {len(val_cand_df):,} Validation candidate pairs.")
 
     # 5. Extract features for Train and Val
@@ -194,7 +182,6 @@ def run_model_comparison():
         }
         lgb_grid_results.append(entry)
 
-        # Select best threshold (prefer conservative / higher threshold if tied)
         if (eval_res["macro_f05"] > best_lgb_f05 + 1e-5) or (abs(eval_res["macro_f05"] - best_lgb_f05) <= 1e-5 and thresh > best_lgb_thresh):
             best_lgb_f05 = eval_res["macro_f05"]
             best_lgb_thresh = thresh

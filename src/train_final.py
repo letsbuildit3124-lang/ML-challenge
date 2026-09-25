@@ -18,10 +18,10 @@ from src.data_loader import load_source_file, load_ground_truth
 from src.dataset_builder import extract_record_dict_from_df
 from src.features import compute_pairwise_features
 from src.model import LightGBMERModel, XGBoostERModel, get_model
-from src.blocking_v2 import add_v2_blocking_columns, generate_v2_candidates
+from src.blocking_v2 import add_v2_blocking_columns, block_s1_against_target_file_chunked
 
 
-def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
+def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 50000, target_chunk_size: int = 250000):
     config = get_config()
     print("=" * 80)
     print("PHASE: FINAL PRODUCTION MODEL RETRAINING (100% TRAINING DATA)")
@@ -61,24 +61,7 @@ def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
 
     print(f"Total Ground-Truth Positive Pairs: {len(gt_pairs_all):,} across {len(gt_map):,} S1 entities.")
 
-    # 3. Load and prepare S2 and S3 tables
-    print("\nLoading and indexing Train Source 2...", flush=True)
-    t0 = time.time()
-    s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-")
-    s2_p = add_v2_blocking_columns(s2_df)
-    del s2_df
-    gc.collect()
-    print(f"Loaded {len(s2_p):,} S2 entities in {time.time() - t0:.2f}s", flush=True)
-
-    print("\nLoading and indexing Train Source 3...", flush=True)
-    t0 = time.time()
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
-    s3_p = add_v2_blocking_columns(s3_df)
-    del s3_df
-    gc.collect()
-    print(f"Loaded {len(s3_p):,} S3 entities in {time.time() - t0:.2f}s", flush=True)
-
-    # 4. Load S1
+    # 3. Load S1
     print("\nLoading and indexing 100% Train Source 1...", flush=True)
     t0 = time.time()
     s1_df = load_source_file(config.train_s1_path, expected_prefix="S1-")
@@ -88,7 +71,7 @@ def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
     gc.collect()
     print(f"Loaded {total_s1:,} Train S1 entities in {time.time() - t0:.2f}s", flush=True)
 
-    # 5. Process S1 in memory-safe chunks and accumulate training feature vectors
+    # 4. Process S1 in memory-safe chunks and accumulate training feature vectors
     num_chunks = (total_s1 + s1_chunk_size - 1) // s1_chunk_size
     print(f"\nGenerating V2 Candidates and extracting features across {num_chunks} chunks...", flush=True)
 
@@ -104,26 +87,31 @@ def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
 
         s1_chk = s1_p.slice(c_start, c_len)
         s1_records = extract_record_dict_from_df(s1_chk)
-
-        # Generate candidates against S2 & S3
-        cands_s2 = generate_v2_candidates(s1_chk, s2_p, max_cands_per_s1=30)["union"]
-        cands_s3 = generate_v2_candidates(s1_chk, s3_p, max_cands_per_s1=30)["union"]
-        cand_df = pl.concat([cands_s2, cands_s3]).unique()
-
-        # Extract target records for active candidate pairs
-        active_s2 = [t for t in cand_df["target_id"].to_list() if t.startswith("S2-")]
-        active_s3 = [t for t in cand_df["target_id"].to_list() if t.startswith("S3-")]
-
         target_records: Dict[str, Dict[str, Any]] = {}
-        if active_s2:
-            s2_matched = s2_p.filter(pl.col("eid").is_in(list(set(active_s2))))
-            target_records.update(extract_record_dict_from_df(s2_matched))
-            del s2_matched
 
-        if active_s3:
-            s3_matched = s3_p.filter(pl.col("eid").is_in(list(set(active_s3))))
-            target_records.update(extract_record_dict_from_df(s3_matched))
-            del s3_matched
+        # Stream block against S2
+        cands_s2, recs_s2 = block_s1_against_target_file_chunked(
+            s1_chk,
+            config.train_s2_path,
+            target_chunk_size=target_chunk_size,
+            max_cands_per_s1=30,
+            extract_matched_records=True
+        )
+        target_records.update(recs_s2)
+        del recs_s2
+
+        # Stream block against S3
+        cands_s3, recs_s3 = block_s1_against_target_file_chunked(
+            s1_chk,
+            config.train_s3_path,
+            target_chunk_size=target_chunk_size,
+            max_cands_per_s1=30,
+            extract_matched_records=True
+        )
+        target_records.update(recs_s3)
+        del recs_s3
+
+        cand_df = pl.concat([cands_s2, cands_s3]).unique()
 
         # Compute pairwise features
         chk_feats = []
@@ -157,8 +145,7 @@ def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
             flush=True
         )
 
-    # Free indexed tables
-    del s1_p, s2_p, s3_p
+    del s1_p
     gc.collect()
 
     print("\nConcatenating full dataset feature matrices...", flush=True)
@@ -169,12 +156,12 @@ def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
 
     print(f"Final Full Training Matrix: {X_train_all.shape} (Positives: {int(y_train_all.sum()):,}, Negatives: {len(y_train_all) - int(y_train_all.sum()):,})")
 
-    # 6. Train Selected Model on 100% Data
+    # 5. Train Selected Model on 100% Data
     print(f"\nRetraining {selected_model_type.upper()} on 100% of Training Data...", flush=True)
     model = get_model(selected_model_type, config)
     train_res = model.train(X_train_all, y_train_all)
 
-    # 7. Save Final Production Model
+    # 6. Save Final Production Model
     final_dir = os.path.join(config.models_dir, "final")
     os.makedirs(final_dir, exist_ok=True)
     
@@ -217,7 +204,8 @@ def train_final_model(model_choice: str = "auto", s1_chunk_size: int = 100000):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train final model on 100% training data")
     parser.add_argument("--model", type=str, default="auto", choices=["lightgbm", "xgboost", "auto"], help="Model architecture")
-    parser.add_argument("--chunk-size", type=int, default=100000, help="S1 chunk size for memory safety")
+    parser.add_argument("--chunk-size", type=int, default=50000, help="S1 chunk size for memory safety")
+    parser.add_argument("--target-chunk-size", type=int, default=250000, help="Target chunk size")
     args = parser.parse_args()
 
-    train_final_model(model_choice=args.model, s1_chunk_size=args.chunk_size)
+    train_final_model(model_choice=args.model, s1_chunk_size=args.chunk_size, target_chunk_size=args.target_chunk_size)

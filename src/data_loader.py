@@ -1,12 +1,12 @@
 """
-Data loading and validation module.
+Data loading and validation module with memory-safe chunked readers.
 """
 
 import os
 import sys
 import gc
 import polars as pl
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Generator
 from src.config import Config, get_config
 
 def load_source_file(
@@ -45,6 +45,35 @@ def load_source_file(
 
     return df
 
+def iter_source_file_chunks(
+    file_path: str,
+    chunk_size: int = 250000,
+    expected_prefix: Optional[str] = None
+) -> Generator[pl.DataFrame, None, None]:
+    """
+    Streams a source TSV file in memory-safe chunks using Polars batched reader.
+    Keeps memory footprint strictly low on resource-constrained servers.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Source file not found at: {file_path}")
+
+    reader = pl.read_csv_batched(
+        file_path,
+        separator="\t",
+        batch_size=chunk_size,
+        truncate_ragged_lines=True,
+        null_values=["", "NULL", "null", "None", "NaN"]
+    )
+
+    while True:
+        batches = reader.next_batches(1)
+        if not batches:
+            break
+        chunk = batches[0]
+        if len(chunk) == 0:
+            break
+        yield chunk
+
 def load_ground_truth(file_path: str, n_rows: Optional[int] = None) -> pl.DataFrame:
     """
     Loads train_ground_truth.tsv and validates columns.
@@ -68,51 +97,3 @@ def load_ground_truth(file_path: str, n_rows: Optional[int] = None) -> pl.DataFr
             raise ValueError(f"Missing required column '{col}' in {file_path}. Found: {df.columns}")
 
     return df
-
-def print_dataset_inventory(config: Config) -> Dict[str, Any]:
-    """
-    Prints a concise inventory of all training and test datasets without keeping them in memory.
-    """
-    print("=" * 70)
-    print("DATASET INVENTORY & INTEGRITY CHECK")
-    print("=" * 70)
-
-    files_info = [
-        ("Train Source 1", config.train_s1_path, "S1-"),
-        ("Train Source 2", config.train_s2_path, "S2-"),
-        ("Train Source 3", config.train_s3_path, "S3-"),
-        ("Test Source 1", config.test_s1_path, "S1-"),
-        ("Test Source 2", config.test_s2_path, "S2-"),
-        ("Test Source 3", config.test_s3_path, "S3-"),
-    ]
-
-    summary = {}
-
-    for name, path, prefix in files_info:
-        if os.path.exists(path):
-            df = load_source_file(path, expected_prefix=prefix)
-            row_count = len(df)
-            null_name = df["business_name"].null_count()
-            null_addr = df["business_address"].null_count()
-            null_country = df["country"].null_count()
-            summary[name] = {
-                "rows": row_count,
-                "null_name": null_name,
-                "null_addr": null_addr,
-                "null_country": null_country
-            }
-            print(f"[{name}] Rows: {row_count:,} | Nulls -> Name: {null_name:,}, Addr: {null_addr:,}, Country: {null_country:,}")
-            del df
-            gc.collect()
-        else:
-            print(f"[MISSING] {name} not found at {path}")
-
-    if os.path.exists(config.train_gt_path):
-        gt_df = load_ground_truth(config.train_gt_path)
-        summary["Train Ground Truth"] = {"rows": len(gt_df)}
-        print(f"[Train Ground Truth] Rows: {len(gt_df):,}")
-        del gt_df
-        gc.collect()
-
-    print("=" * 70)
-    return summary

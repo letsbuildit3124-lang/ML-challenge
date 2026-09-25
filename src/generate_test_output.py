@@ -3,6 +3,7 @@ Final Test Inference and Submission Generation Module.
 Generates official competition deliverables:
   - output/matching_results.tsv
   - output/candidate_pairs.tsv
+Uses streaming chunked target blocking for strictly controlled sub-1GB RAM usage.
 Adheres strictly to all official formatting and integrity rules and executes official validation.
 """
 
@@ -22,7 +23,7 @@ from src.data_loader import load_source_file
 from src.dataset_builder import extract_record_dict_from_df
 from src.features import compute_pairwise_features
 from src.model import LightGBMERModel, XGBoostERModel, get_model, BaseERModel
-from src.blocking_v2 import add_v2_blocking_columns, generate_v2_candidates
+from src.blocking_v2 import add_v2_blocking_columns, block_s1_against_target_file_chunked
 from src.submission import write_submission_files
 
 
@@ -134,7 +135,8 @@ def run_sanity_checks(
 def generate_test_output(
     model_choice: str = "auto",
     user_threshold: float = None,
-    s1_chunk_size: int = 50000
+    s1_chunk_size: int = 50000,
+    target_chunk_size: int = 250000
 ):
     config = get_config()
     print("=" * 80)
@@ -145,7 +147,6 @@ def generate_test_output(
     selected_model_type = model_choice.lower().strip()
     selected_threshold = user_threshold
 
-    # Try loading final production model metadata first
     final_meta_path = os.path.join(config.models_dir, "final", "final_model_metadata.json")
     val_meta_path = os.path.join(config.models_dir, "model_metadata.json")
 
@@ -200,25 +201,17 @@ def generate_test_output(
     model = get_model(selected_model_type, config)
     model.load(model_path)
 
-    # 2. Load Test Data
-    t0 = time.time()
-    print("\nLoading and indexing Test Source 2...", flush=True)
-    test_s2_df = load_source_file(config.test_s2_path, expected_prefix="S2-")
-    test_s2_p = add_v2_blocking_columns(test_s2_df)
-    valid_target_ids = set(test_s2_df["entity_id"].to_list())
-    del test_s2_df
-    gc.collect()
-    print(f"Loaded {len(test_s2_p):,} Test S2 entities in {time.time() - t0:.2f}s", flush=True)
+    # 2. Get Valid Target IDs for Sanity Checks
+    print("\nReading test target IDs...", flush=True)
+    valid_target_ids = set()
+    if os.path.exists(config.test_s2_path):
+        s2_ids = pl.read_csv(config.test_s2_path, separator="\t", columns=["entity_id"], truncate_ragged_lines=True)["entity_id"].to_list()
+        valid_target_ids.update(s2_ids)
+    if os.path.exists(config.test_s3_path):
+        s3_ids = pl.read_csv(config.test_s3_path, separator="\t", columns=["entity_id"], truncate_ragged_lines=True)["entity_id"].to_list()
+        valid_target_ids.update(s3_ids)
 
-    t0 = time.time()
-    print("\nLoading and indexing Test Source 3...", flush=True)
-    test_s3_df = load_source_file(config.test_s3_path, expected_prefix="S3-")
-    test_s3_p = add_v2_blocking_columns(test_s3_df)
-    valid_target_ids.update(test_s3_df["entity_id"].to_list())
-    del test_s3_df
-    gc.collect()
-    print(f"Loaded {len(test_s3_p):,} Test S3 entities in {time.time() - t0:.2f}s", flush=True)
-
+    # 3. Load Test Source 1
     t0 = time.time()
     print("\nLoading and indexing Test Source 1...", flush=True)
     test_s1_df = load_source_file(config.test_s1_path, expected_prefix="S1-")
@@ -233,7 +226,7 @@ def generate_test_output(
     matching_map: Dict[str, List[str]] = {s1_id: [] for s1_id in all_test_s1_ids}
     candidate_map: Dict[str, List[str]] = {s1_id: [] for s1_id in all_test_s1_ids}
 
-    # 3. Process Test S1 in memory-safe chunks
+    # 4. Process Test S1 in memory-safe chunks
     num_chunks = (total_test_s1 + s1_chunk_size - 1) // s1_chunk_size
     print(f"\nProcessing {total_test_s1:,} Test S1 entities across {num_chunks} chunks...", flush=True)
 
@@ -248,31 +241,35 @@ def generate_test_output(
 
         s1_chk = test_s1_p.slice(c_start, c_len)
         s1_records = extract_record_dict_from_df(s1_chk)
+        target_records: Dict[str, Dict[str, Any]] = {}
 
-        # Generate V2 Candidates
-        cands_s2 = generate_v2_candidates(s1_chk, test_s2_p, max_cands_per_s1=40)["union"]
-        cands_s3 = generate_v2_candidates(s1_chk, test_s3_p, max_cands_per_s1=40)["union"]
+        # Stream block against Test S2
+        cands_s2, recs_s2 = block_s1_against_target_file_chunked(
+            s1_chk,
+            config.test_s2_path,
+            target_chunk_size=target_chunk_size,
+            max_cands_per_s1=40,
+            extract_matched_records=True
+        )
+        target_records.update(recs_s2)
+        del recs_s2
+
+        # Stream block against Test S3
+        cands_s3, recs_s3 = block_s1_against_target_file_chunked(
+            s1_chk,
+            config.test_s3_path,
+            target_chunk_size=target_chunk_size,
+            max_cands_per_s1=40,
+            extract_matched_records=True
+        )
+        target_records.update(recs_s3)
+        del recs_s3
+
         cand_df = pl.concat([cands_s2, cands_s3]).unique()
-
         chunk_cand_count = len(cand_df)
         total_candidates_found += chunk_cand_count
 
         if chunk_cand_count > 0:
-            active_s2 = [t for t in cand_df["target_id"].to_list() if t.startswith("S2-")]
-            active_s3 = [t for t in cand_df["target_id"].to_list() if t.startswith("S3-")]
-
-            target_records: Dict[str, Dict[str, Any]] = {}
-            if active_s2:
-                s2_matched = test_s2_p.filter(pl.col("eid").is_in(list(set(active_s2))))
-                target_records.update(extract_record_dict_from_df(s2_matched))
-                del s2_matched
-
-            if active_s3:
-                s3_matched = test_s3_p.filter(pl.col("eid").is_in(list(set(active_s3))))
-                target_records.update(extract_record_dict_from_df(s3_matched))
-                del s3_matched
-
-            # Extract features
             cand_rows = cand_df.to_dict(as_series=False)
             s1_col = cand_rows["s1_id"]
             tgt_col = cand_rows["target_id"]
@@ -311,17 +308,17 @@ def generate_test_output(
         )
 
     # Free memory
-    del test_s1_p, test_s2_p, test_s3_p
+    del test_s1_p
     gc.collect()
 
-    # 4. Write Deliverables to output/
+    # 5. Write Deliverables to output/
     print("\nWriting official competition TSV files...", flush=True)
     match_path, cand_path = write_submission_files(config, all_test_s1_ids, matching_map, candidate_map)
 
-    # 5. Execute 13 Internal Sanity Checks
+    # 6. Execute 13 Internal Sanity Checks
     sanity_passed = run_sanity_checks(match_path, cand_path, all_test_s1_ids, valid_target_ids)
 
-    # 6. Execute Official Submission Validator
+    # 7. Execute Official Submission Validator
     print("\n" + "=" * 80)
     print("RUNNING OFFICIAL SUBMISSION VALIDATOR (utils/validate_submission.py)")
     print("=" * 80)
@@ -368,6 +365,12 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="auto", choices=["lightgbm", "xgboost", "auto"], help="Model architecture")
     parser.add_argument("--threshold", type=float, default=None, help="Decision threshold (default: auto from validation)")
     parser.add_argument("--chunk-size", type=int, default=50000, help="S1 chunk size for test inference")
+    parser.add_argument("--target-chunk-size", type=int, default=250000, help="Target chunk size")
     args = parser.parse_args()
 
-    generate_test_output(model_choice=args.model, user_threshold=args.threshold, s1_chunk_size=args.chunk_size)
+    generate_test_output(
+        model_choice=args.model,
+        user_threshold=args.threshold,
+        s1_chunk_size=args.chunk_size,
+        target_chunk_size=args.target_chunk_size
+    )

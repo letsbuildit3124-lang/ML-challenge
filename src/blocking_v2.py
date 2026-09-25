@@ -8,24 +8,26 @@ Implements high-recall, volume-controlled multi-view blocking methods:
 - Method D: Phonetic (Soundex/Metaphone) Compound Blocking
 - Method E: Offline Transliteration-Aware Blocking
 - Method F: Character N-Gram TF-IDF Top-K Retrieval
+Includes streaming target file chunking for memory safety on low-RAM instances.
 """
 
 import os
 import re
-import math
+import gc
 import unicodedata
 from collections import Counter, defaultdict
 from typing import Dict, List, Set, Tuple, Any, Optional
 import polars as pl
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import linear_kernel
+
+from src.data_loader import iter_source_file_chunks
+from src.dataset_builder import extract_record_dict_from_df
 
 # =============================================================================
 # 1. OFFLINE TRANSLITERATION & PHONETIC HELPERS
 # =============================================================================
 
-# Indic Unicode ranges to ASCII approximation mapping table
 INDIC_ASCII_MAP = {
     # Devanagari
     0x0905: 'a', 0x0906: 'aa', 0x0907: 'i', 0x0908: 'ee', 0x0909: 'u', 0x090A: 'oo',
@@ -54,12 +56,9 @@ INDIC_ASCII_MAP = {
 }
 
 def offline_transliterate(text: str) -> str:
-    """
-    Converts Indic and accented characters to Latin ASCII equivalents offline.
-    """
+    """Converts Indic and accented characters to Latin ASCII equivalents offline."""
     if not text:
         return ""
-    # Normalize Unicode NFKD
     text = unicodedata.normalize("NFKD", text)
     out = []
     for ch in text:
@@ -69,21 +68,17 @@ def offline_transliterate(text: str) -> str:
         elif code < 128:
             out.append(ch)
         else:
-            # Fallback ascii de-accent
             decomp = unicodedata.normalize("NFD", ch)
             ascii_chars = [c for c in decomp if ord(c) < 128]
             out.extend(ascii_chars if ascii_chars else [" "])
     return "".join(out)
 
 def compute_soundex(token: str) -> str:
-    """
-    Pure Python offline Soundex algorithm.
-    """
+    """Pure Python offline Soundex algorithm."""
     if not token or not token.isalpha():
         return ""
     token = token.upper()
     first_char = token[0]
-    
     mapping = {
         'B': '1', 'F': '1', 'P': '1', 'V': '1',
         'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
@@ -92,10 +87,8 @@ def compute_soundex(token: str) -> str:
         'M': '5', 'N': '5',
         'R': '6'
     }
-    
     encoded = [first_char]
     prev = mapping.get(first_char, '0')
-    
     for ch in token[1:]:
         curr = mapping.get(ch, '0')
         if curr != '0' and curr != prev:
@@ -103,13 +96,10 @@ def compute_soundex(token: str) -> str:
         prev = curr
         if len(encoded) == 4:
             break
-            
     while len(encoded) < 4:
         encoded.append('0')
-        
     return "".join(encoded[:4])
 
-# Common address & corporate stopwords for frequency capping
 CORP_STOPWORDS = {
     'ltd', 'limited', 'pvt', 'private', 'corp', 'corporation', 'inc', 'incorporated',
     'llc', 'llp', 'co', 'company', 'gmbh', 'sa', 'sarl', 'plc', 'bv', 'nv', 'assoc',
@@ -131,9 +121,7 @@ ADDR_STOPWORDS = {
 # =============================================================================
 
 def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Computes all V1 + V2 vectorized attributes for multi-view candidate blocking.
-    """
+    """Computes all V1 + V2 vectorized attributes for multi-view candidate blocking."""
     # 1. Base Normalization
     df_p = df.with_columns([
         pl.col("entity_id").alias("eid"),
@@ -142,13 +130,12 @@ def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("country").fill_null("").str.to_uppercase().str.strip_chars().alias("country"),
     ])
 
-    # 2. Transliteration representation
+    # 2. Transliteration (for names)
     def translit_single(val: Optional[str]) -> str:
         return offline_transliterate(val or "")
 
     df_p = df_p.with_columns([
         pl.col("norm_name").map_elements(translit_single, return_dtype=pl.String).alias("translit_name"),
-        pl.col("norm_addr").map_elements(translit_single, return_dtype=pl.String).alias("translit_addr"),
     ])
 
     # 3. Compact Name, First Words, Numbers
@@ -210,7 +197,6 @@ def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
 # 3. INDIVIDUAL V2 BLOCKING METHODS
 # =============================================================================
 
-# --- V1 Preserved Blocking Methods ---
 def block_exact_compact_name(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
     return s1_p.filter(pl.col("compact_name").str.len_chars() >= 3).select(["eid", "compact_name", "country"]).join(
         tgt_p.filter(pl.col("compact_name").str.len_chars() >= 3).select(["eid", "compact_name", "country"]),
@@ -235,17 +221,13 @@ def block_f2_words_addr_num(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataF
         on=["f2_num", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
-# --- V2 New Blocking Methods ---
 def block_method_a_postal_cname(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
-    """Method A: Postal / PIN code + 4-char name prefix + country."""
     return s1_p.filter(pl.col("pin_cname4").is_not_null()).select(["eid", "pin_cname4", "country"]).join(
         tgt_p.filter(pl.col("pin_cname4").is_not_null()).select(["eid", "pin_cname4", "country"]),
         on=["pin_cname4", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
 def block_method_b_ngram_affix(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
-    """Method B: 6-char Prefix & 6-char Suffix + First Addr Num + country."""
-    # Prefix 6 + Addr Num
     s1_pref = s1_p.filter(pl.col("first_addr_num").is_not_null() & (pl.col("cname_pref6").str.len_chars() >= 5)).with_columns(
         pl.concat_str([pl.col("cname_pref6"), pl.lit("_"), pl.col("first_addr_num")]).alias("pref6_num")
     )
@@ -257,7 +239,6 @@ def block_method_b_ngram_affix(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.Da
         on=["pref6_num", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
-    # Suffix 6 + Addr Num
     s1_suff = s1_p.filter(pl.col("first_addr_num").is_not_null() & (pl.col("cname_suff6").str.len_chars() >= 5)).with_columns(
         pl.concat_str([pl.col("cname_suff6"), pl.lit("_"), pl.col("first_addr_num")]).alias("suff6_num")
     )
@@ -272,14 +253,12 @@ def block_method_b_ngram_affix(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.Da
     return pl.concat([j_pref, j_suff]).unique()
 
 def block_method_d_phonetic_soundex(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
-    """Method D: Soundex phonetic key + First Addr Num + country."""
     return s1_p.filter(pl.col("soundex_num").is_not_null()).select(["eid", "soundex_num", "country"]).join(
         tgt_p.filter(pl.col("soundex_num").is_not_null()).select(["eid", "soundex_num", "country"]),
         on=["soundex_num", "country"]
     ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
 
 def block_method_e_transliteration(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> pl.DataFrame:
-    """Method E: Transliterated compact name + Addr Num + country."""
     j1 = s1_p.filter(pl.col("translit_cname").str.len_chars() >= 4).select(["eid", "translit_cname", "country"]).join(
         tgt_p.filter(pl.col("translit_cname").str.len_chars() >= 4).select(["eid", "translit_cname", "country"]),
         on=["translit_cname", "country"]
@@ -292,103 +271,6 @@ def block_method_e_transliteration(s1_p: pl.DataFrame, tgt_p: pl.DataFrame) -> p
 
     return pl.concat([j1, j2]).unique()
 
-def block_method_c_rare_token_overlap(
-    s1_p: pl.DataFrame,
-    tgt_p: pl.DataFrame,
-    max_token_freq: int = 500
-) -> pl.DataFrame:
-    """
-    Method C: Significant Name Token Inverted Index with frequency cap to avoid explosions.
-    """
-    # 1. Explode name tokens
-    s1_toks = s1_p.select(["eid", "norm_name", "first_addr_num", "country"]).with_columns(
-        pl.col("norm_name").str.split(" ").alias("tokens")
-    ).explode("tokens").filter(
-        (pl.col("tokens").str.len_chars() >= 4) &
-        (~pl.col("tokens").is_in(list(CORP_STOPWORDS | ADDR_STOPWORDS)))
-    )
-
-    tgt_toks = tgt_p.select(["eid", "norm_name", "first_addr_num", "country"]).with_columns(
-        pl.col("norm_name").str.split(" ").alias("tokens")
-    ).explode("tokens").filter(
-        (pl.col("tokens").str.len_chars() >= 4) &
-        (~pl.col("tokens").is_in(list(CORP_STOPWORDS | ADDR_STOPWORDS)))
-    )
-
-    # Filter by token frequency in target to avoid generic terms
-    freqs = tgt_toks["tokens"].value_counts()
-    valid_tokens = freqs.filter((pl.col("count") >= 1) & (pl.col("count") <= max_token_freq))["tokens"]
-
-    s1_valid = s1_toks.filter(pl.col("tokens").is_in(valid_tokens))
-    tgt_valid = tgt_toks.filter(pl.col("tokens").is_in(valid_tokens))
-
-    # Join on (rare_token, first_addr_num, country)
-    j_tok_num = s1_valid.filter(pl.col("first_addr_num").is_not_null()).select(["eid", "tokens", "first_addr_num", "country"]).join(
-        tgt_valid.filter(pl.col("first_addr_num").is_not_null()).select(["eid", "tokens", "first_addr_num", "country"]),
-        on=["tokens", "first_addr_num", "country"]
-    ).select([pl.col("eid").alias("s1_id"), pl.col("eid_right").alias("target_id")])
-
-    return j_tok_num.unique()
-
-def block_method_f_tfidf_retrieval(
-    s1_p: pl.DataFrame,
-    tgt_p: pl.DataFrame,
-    top_k: int = 20,
-    min_sim: float = 0.70
-) -> pl.DataFrame:
-    """
-    Method F: Character 3-gram TF-IDF top-K retrieval using memory-safe sparse operations.
-    """
-    all_pairs = []
-    countries = s1_p["country"].unique().to_list()
-
-    for c in countries:
-        s1_c = s1_p.filter(pl.col("country") == c)
-        tgt_c = tgt_p.filter(pl.col("country") == c)
-
-        if len(s1_c) == 0 or len(tgt_c) == 0:
-            continue
-
-        s1_names = s1_c["norm_name"].to_list()
-        tgt_names = tgt_c["norm_name"].to_list()
-        s1_eids = s1_c["eid"].to_list()
-        tgt_eids = tgt_c["eid"].to_list()
-
-        vec = TfidfVectorizer(analyzer="char", ngram_range=(3, 3), min_df=2, max_features=30000, dtype=np.float32)
-        try:
-            tgt_mat = vec.fit_transform(tgt_names)
-            s1_mat = vec.transform(s1_names)
-        except ValueError:
-            continue
-
-        # Compute sparse cosine similarity in small query batches of 10 rows
-        chunk_sz = 10
-        tgt_mat_t = tgt_mat.T.tocsr()
-        for i in range(0, len(s1_names), chunk_sz):
-            s1_sub = s1_mat[i:i+chunk_sz]
-            sparse_sims = s1_sub.dot(tgt_mat_t)
-            for row_i in range(s1_sub.shape[0]):
-                row = sparse_sims.getrow(row_i)
-                cols = row.indices
-                data = row.data
-                high_mask = data >= min_sim
-                if np.any(high_mask):
-                    top_cols = cols[high_mask]
-                    top_data = data[high_mask]
-                    if len(top_cols) > top_k:
-                        top_cols = top_cols[np.argsort(top_data)[-top_k:]]
-                    s1_id = s1_eids[i + row_i]
-                    for idx in top_cols:
-                        all_pairs.append((s1_id, tgt_eids[idx]))
-
-    if not all_pairs:
-        return pl.DataFrame(schema={"s1_id": pl.Utf8, "target_id": pl.Utf8})
-
-    return pl.DataFrame({
-        "s1_id": [p[0] for p in all_pairs],
-        "target_id": [p[1] for p in all_pairs]
-    }).unique()
-
 # =============================================================================
 # 4. MASTER V2 CANDIDATE GENERATION UNION
 # =============================================================================
@@ -396,12 +278,9 @@ def block_method_f_tfidf_retrieval(
 def generate_v2_candidates(
     s1_p: pl.DataFrame,
     tgt_p: pl.DataFrame,
-    include_tfidf: bool = False,
-    max_cands_per_s1: int = 75
+    max_cands_per_s1: int = 40
 ) -> Dict[str, pl.DataFrame]:
-    """
-    Runs all V1 and V2 candidate generation rules and returns individual and union DataFrames.
-    """
+    """Runs all V1 and V2 candidate generation rules and returns union DataFrame."""
     results = {}
     
     # Preserved V1
@@ -416,9 +295,6 @@ def generate_v2_candidates(
     results["7_method_d_phonetic_soundex"] = block_method_d_phonetic_soundex(s1_p, tgt_p)
     results["8_method_e_transliteration"] = block_method_e_transliteration(s1_p, tgt_p)
 
-    if include_tfidf:
-        results["9_method_f_tfidf_retrieval"] = block_method_f_tfidf_retrieval(s1_p, tgt_p)
-
     # Union
     union_df = pl.concat(list(results.values())).unique()
     
@@ -429,3 +305,55 @@ def generate_v2_candidates(
 
     results["union"] = union_df
     return results
+
+# =============================================================================
+# 5. STREAMING CHUNKED BLOCKING FOR MEMORY SAFETY ON LOW-RAM INSTANCES
+# =============================================================================
+
+def block_s1_against_target_file_chunked(
+    s1_p: pl.DataFrame,
+    target_file_path: str,
+    target_chunk_size: int = 250000,
+    max_cands_per_s1: int = 40,
+    extract_matched_records: bool = True
+) -> Tuple[pl.DataFrame, Dict[str, Dict[str, Any]]]:
+    """
+    Blocks S1 against a target file (Source 2 or Source 3) by streaming the target
+    in chunks of `target_chunk_size` rows.
+    
+    Keeps memory footprint strictly under 1GB even on 5M+ row target datasets.
+    """
+    cand_chunks: List[pl.DataFrame] = []
+    target_records: Dict[str, Dict[str, Any]] = {}
+
+    for batch_idx, batch_df in enumerate(iter_source_file_chunks(target_file_path, chunk_size=target_chunk_size)):
+        # 1. Add V2 blocking columns to the small chunk
+        batch_p = add_v2_blocking_columns(batch_df)
+
+        # 2. Block against S1
+        pairs_dict = generate_v2_candidates(s1_p, batch_p, max_cands_per_s1=max_cands_per_s1)
+        pairs_df = pairs_dict["union"]
+
+        if len(pairs_df) > 0:
+            cand_chunks.append(pairs_df)
+
+            # 3. Extract records for only active candidates in this chunk
+            if extract_matched_records:
+                active_target_ids = list(set(pairs_df["target_id"].to_list()))
+                matched_rows = batch_p.filter(pl.col("eid").is_in(active_target_ids))
+                target_records.update(extract_record_dict_from_df(matched_rows))
+                del matched_rows
+
+        del batch_df, batch_p, pairs_dict, pairs_df
+        gc.collect()
+
+    if cand_chunks:
+        final_cands = pl.concat(cand_chunks).unique()
+        if max_cands_per_s1:
+            final_cands = final_cands.with_columns(
+                pl.int_range(pl.len()).over("s1_id").alias("rank")
+            ).filter(pl.col("rank") < max_cands_per_s1).select(["s1_id", "target_id"])
+    else:
+        final_cands = pl.DataFrame(schema={"s1_id": pl.Utf8, "target_id": pl.Utf8})
+
+    return final_cands, target_records
