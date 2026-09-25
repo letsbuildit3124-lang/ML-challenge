@@ -1,0 +1,7584 @@
+{
+  "train_s1_dist": {
+    "dataset_name": "Train Source 1",
+    "total_rows": 100000,
+    "country_distribution": {
+      "US": 59890,
+      "India": 40110
+    },
+    "name_length_stats": {
+      "mean": 24.04487,
+      "median": 24.0,
+      "p95": 37.0,
+      "max": 71
+    },
+    "addr_length_stats": {
+      "mean": 52.08069,
+      "median": 41.0,
+      "p95": 103.0,
+      "max": 222
+    },
+    "name_token_stats": {
+      "mean": 3.54775,
+      "median": 4.0,
+      "p95": 5.0,
+      "max": 12
+    },
+    "addr_token_stats": {
+      "mean": 8.03632,
+      "median": 7.0,
+      "p95": 15.0,
+      "max": 38
+    },
+    "missing_name_pct": 0.0,
+    "missing_addr_pct": 0.0,
+    "non_latin_name_pct": 0.0,
+    "non_latin_addr_pct": 0.021,
+    "numeric_token_availability_pct": 96.54700000000001,
+    "postal_pin_availability_pct": 6.74,
+    "top_norm_collisions": [
+      {
+        "norm_name": "primary care group",
+        "count": 15
+      },
+      {
+        "norm_name": "physical therapy group",
+        "count": 13
+      },
+      {
+        "norm_name": "primary care specialists llc",
+        "count": 12
+      },
+      {
+        "norm_name": "internal medicine group",
+        "count": 12
+      },
+      {
+        "norm_name": "cardiology center llc",
+        "count": 11
+      },
+      {
+        "norm_name": "crestline llc",
+        "count": 11
+      },
+      {
+        "norm_name": "foot ankle group",
+        "count": 11
+      },
+      {
+        "norm_name": "cardiology group",
+        "count": 11
+      },
+      {
+        "norm_name": "meridian llc",
+        "count": 10
+      },
+      {
+        "norm_name": "womens health specialists",
+        "count": 10
+      }
+    ],
+    "top_compact_collisions": [
+      {
+        "compact_name": "vision",
+        "count": 51
+      },
+      {
+        "compact_name": "shree",
+        "count": 43
+      },
+      {
+        "compact_name": "green",
+        "count": 40
+      },
+      {
+        "compact_name": "tech",
+        "count": 40
+      },
+      {
+        "compact_name": "apex",
+        "count": 39
+      },
+      {
+        "compact_name": "blue",
+        "count": 38
+      },
+      {
+        "compact_name": "om",
+        "count": 36
+      },
+      {
+        "compact_name": "shakti",
+        "count": 35
+      },
+      {
+        "compact_name": "smart",
+        "count": 33
+      },
+      {
+        "compact_name": "indian",
+        "count": 32
+      }
+    ],
+    "top_soundex_collisions": [
+      {
+        "soundex_num": "S600_1",
+        "count": 38
+      },
+      {
+        "soundex_num": "S500_1",
+        "count": 31
+      },
+      {
+        "soundex_num": "I530_1",
+        "count": 31
+      },
+      {
+        "soundex_num": "S600_2",
+        "count": 29
+      },
+      {
+        "soundex_num": "N000_1",
+        "count": 26
+      },
+      {
+        "soundex_num": "S600_3",
+        "count": 26
+      },
+      {
+        "soundex_num": "S000_2",
+        "count": 25
+      },
+      {
+        "soundex_num": "S100_1",
+        "count": 24
+      },
+      {
+        "soundex_num": "N000_2",
+        "count": 24
+      },
+      {
+        "soundex_num": "R400_1",
+        "count": 23
+      }
+    ],
+    "runtime_s": 3.2985990047454834
+  },
+  "test_s1_dist": {
+    "dataset_name": "Test Source 1",
+    "total_rows": 100000,
+    "country_distribution": {
+      "US": 38419,
+      "India": 46598,
+      "France": 14983
+    },
+    "name_length_stats": {
+      "mean": 23.82799,
+      "median": 24.0,
+      "p95": 36.0,
+      "max": 92
+    },
+    "addr_length_stats": {
+      "mean": 57.09864,
+      "median": 50.0,
+      "p95": 105.0,
+      "max": 216
+    },
+    "name_token_stats": {
+      "mean": 3.52262,
+      "median": 4.0,
+      "p95": 5.0,
+      "max": 13
+    },
+    "addr_token_stats": {
+      "mean": 8.57124,
+      "median": 8.0,
+      "p95": 16.0,
+      "max": 34
+    },
+    "missing_name_pct": 0.0,
+    "missing_addr_pct": 0.0,
+    "non_latin_name_pct": 2.32,
+    "non_latin_addr_pct": 4.2299999999999995,
+    "numeric_token_availability_pct": 95.899,
+    "postal_pin_availability_pct": 4.369,
+    "top_norm_collisions": [
+      {
+        "norm_name": "nantes club sarl",
+        "count": 13
+      },
+      {
+        "norm_name": "bordeaux club sarl",
+        "count": 12
+      },
+      {
+        "norm_name": "behavioral health group",
+        "count": 11
+      },
+      {
+        "norm_name": "bordeaux amicale sarl",
+        "count": 10
+      },
+      {
+        "norm_name": "ear nose throat group",
+        "count": 10
+      },
+      {
+        "norm_name": "urgent care group",
+        "count": 10
+      },
+      {
+        "norm_name": "shree co",
+        "count": 10
+      },
+      {
+        "norm_name": "cardiology medicine",
+        "count": 9
+      },
+      {
+        "norm_name": "urgent care clinic llc",
+        "count": 9
+      },
+      {
+        "norm_name": "nantes ecole sas",
+        "count": 9
+      }
+    ],
+    "top_compact_collisions": [
+      {
+        "compact_name": "shree",
+        "count": 66
+      },
+      {
+        "compact_name": "super",
+        "count": 49
+      },
+      {
+        "compact_name": "green",
+        "count": 46
+      },
+      {
+        "compact_name": "vision",
+        "count": 43
+      },
+      {
+        "compact_name": "innovative",
+        "count": 40
+      },
+      {
+        "compact_name": "tech",
+        "count": 39
+      },
+      {
+        "compact_name": "prime",
+        "count": 38
+      },
+      {
+        "compact_name": "north",
+        "count": 37
+      },
+      {
+        "compact_name": "new",
+        "count": 37
+      },
+      {
+        "compact_name": "bharat",
+        "count": 37
+      }
+    ],
+    "top_soundex_collisions": [
+      {
+        "soundex_num": "S600_1",
+        "count": 46
+      },
+      {
+        "soundex_num": "S600_2",
+        "count": 41
+      },
+      {
+        "soundex_num": "L250_1",
+        "count": 34
+      },
+      {
+        "soundex_num": "S600_3",
+        "count": 34
+      },
+      {
+        "soundex_num": "I530_1",
+        "count": 30
+      },
+      {
+        "soundex_num": "N000_1",
+        "count": 29
+      },
+      {
+        "soundex_num": "S500_1",
+        "count": 29
+      },
+      {
+        "soundex_num": "S100_1",
+        "count": 28
+      },
+      {
+        "soundex_num": "R400_1",
+        "count": 28
+      },
+      {
+        "soundex_num": "I530_2",
+        "count": 27
+      }
+    ],
+    "runtime_s": 3.18857479095459
+  },
+  "train_s2_dist": {
+    "dataset_name": "Train Source 2",
+    "total_rows": 250000,
+    "country_distribution": {
+      "India": 100426,
+      "US": 149574
+    },
+    "name_length_stats": {
+      "mean": 25.068844,
+      "median": 25.0,
+      "p95": 40.0,
+      "max": 104
+    },
+    "addr_length_stats": {
+      "mean": 46.328032,
+      "median": 37.0,
+      "p95": 96.0,
+      "max": 204
+    },
+    "name_token_stats": {
+      "mean": 3.49218,
+      "median": 4.0,
+      "p95": 5.0,
+      "max": 15
+    },
+    "addr_token_stats": {
+      "mean": 7.545210092376937,
+      "median": 6.0,
+      "p95": 15.0,
+      "max": 34
+    },
+    "missing_name_pct": 0.0,
+    "missing_addr_pct": 3.3092,
+    "non_latin_name_pct": 15.0348,
+    "non_latin_addr_pct": 9.4628,
+    "numeric_token_availability_pct": 90.5928,
+    "postal_pin_availability_pct": 7.452400000000001,
+    "top_norm_collisions": [
+      {
+        "norm_name": "physical therapy",
+        "count": 30
+      },
+      {
+        "norm_name": "urgent care",
+        "count": 29
+      },
+      {
+        "norm_name": "behavioral health",
+        "count": 27
+      },
+      {
+        "norm_name": "pediatric dental",
+        "count": 26
+      },
+      {
+        "norm_name": "internal medicine",
+        "count": 24
+      },
+      {
+        "norm_name": "womens health",
+        "count": 23
+      },
+      {
+        "norm_name": "primary care",
+        "count": 23
+      },
+      {
+        "norm_name": "earnosethroat com",
+        "count": 20
+      },
+      {
+        "norm_name": "the dent",
+        "count": 19
+      },
+      {
+        "norm_name": "straight edge",
+        "count": 16
+      }
+    ],
+    "top_compact_collisions": [
+      {
+        "compact_name": "urgentcare",
+        "count": 65
+      },
+      {
+        "compact_name": "physicaltherapy",
+        "count": 64
+      },
+      {
+        "compact_name": "behavioralhealth",
+        "count": 60
+      },
+      {
+        "compact_name": "pediatricdental",
+        "count": 59
+      },
+      {
+        "compact_name": "internalmedicine",
+        "count": 58
+      },
+      {
+        "compact_name": "primarycare",
+        "count": 53
+      },
+      {
+        "compact_name": "meridian",
+        "count": 53
+      },
+      {
+        "compact_name": "shree",
+        "count": 50
+      },
+      {
+        "compact_name": "mumbai",
+        "count": 50
+      },
+      {
+        "compact_name": "womenshealth",
+        "count": 50
+      }
+    ],
+    "top_soundex_collisions": [
+      {
+        "soundex_num": "S600_1",
+        "count": 144
+      },
+      {
+        "soundex_num": "S600_3",
+        "count": 127
+      },
+      {
+        "soundex_num": "S600_2",
+        "count": 114
+      },
+      {
+        "soundex_num": "S600_6",
+        "count": 62
+      },
+      {
+        "soundex_num": "S600_4",
+        "count": 57
+      },
+      {
+        "soundex_num": "S600_5",
+        "count": 56
+      },
+      {
+        "soundex_num": "S530_3",
+        "count": 54
+      },
+      {
+        "soundex_num": "S530_1",
+        "count": 49
+      },
+      {
+        "soundex_num": "S600_8",
+        "count": 47
+      },
+      {
+        "soundex_num": "S500_1",
+        "count": 47
+      }
+    ],
+    "runtime_s": 7.325392961502075
+  },
+  "test_s2_dist": {
+    "dataset_name": "Test Source 2",
+    "total_rows": 250000,
+    "country_distribution": {
+      "India": 118175,
+      "France": 36261,
+      "US": 95564
+    },
+    "name_length_stats": {
+      "mean": 25.70146,
+      "median": 25.0,
+      "p95": 42.0,
+      "max": 87
+    },
+    "addr_length_stats": {
+      "mean": 50.393316,
+      "median": 43.0,
+      "p95": 99.0,
+      "max": 226
+    },
+    "name_token_stats": {
+      "mean": 3.586052,
+      "median": 4.0,
+      "p95": 5.0,
+      "max": 12
+    },
+    "addr_token_stats": {
+      "mean": 8.006081500322566,
+      "median": 7.0,
+      "p95": 15.0,
+      "max": 37
+    },
+    "missing_name_pct": 0.0,
+    "missing_addr_pct": 2.6556,
+    "non_latin_name_pct": 19.0432,
+    "non_latin_addr_pct": 14.1792,
+    "numeric_token_availability_pct": 92.6536,
+    "postal_pin_availability_pct": 4.994400000000001,
+    "top_norm_collisions": [
+      {
+        "norm_name": "cc",
+        "count": 21
+      },
+      {
+        "norm_name": "urgent care",
+        "count": 17
+      },
+      {
+        "norm_name": "pc",
+        "count": 16
+      },
+      {
+        "norm_name": "womens health",
+        "count": 16
+      },
+      {
+        "norm_name": "maisondesant com",
+        "count": 15
+      },
+      {
+        "norm_name": "behavioral health",
+        "count": 14
+      },
+      {
+        "norm_name": "internal medicine",
+        "count": 13
+      },
+      {
+        "norm_name": "pediatric dental",
+        "count": 13
+      },
+      {
+        "norm_name": "ca",
+        "count": 12
+      },
+      {
+        "norm_name": "lille club",
+        "count": 12
+      }
+    ],
+    "top_compact_collisions": [
+      {
+        "compact_name": "newdelhi",
+        "count": 68
+      },
+      {
+        "compact_name": "mumbai",
+        "count": 58
+      },
+      {
+        "compact_name": "shree",
+        "count": 44
+      },
+      {
+        "compact_name": "internalmedicine",
+        "count": 40
+      },
+      {
+        "compact_name": "pediatricdental",
+        "count": 40
+      },
+      {
+        "compact_name": "behavioralhealth",
+        "count": 39
+      },
+      {
+        "compact_name": "urgentcare",
+        "count": 36
+      },
+      {
+        "compact_name": "primarycare",
+        "count": 35
+      },
+      {
+        "compact_name": "kolkata",
+        "count": 33
+      },
+      {
+        "compact_name": "vision",
+        "count": 32
+      }
+    ],
+    "top_soundex_collisions": [
+      {
+        "soundex_num": "S600_1",
+        "count": 145
+      },
+      {
+        "soundex_num": "S600_3",
+        "count": 130
+      },
+      {
+        "soundex_num": "S600_2",
+        "count": 108
+      },
+      {
+        "soundex_num": "S600_4",
+        "count": 96
+      },
+      {
+        "soundex_num": "S600_5",
+        "count": 90
+      },
+      {
+        "soundex_num": "S600_6",
+        "count": 82
+      },
+      {
+        "soundex_num": "S530_3",
+        "count": 75
+      },
+      {
+        "soundex_num": "S530_1",
+        "count": 66
+      },
+      {
+        "soundex_num": "S600_8",
+        "count": 64
+      },
+      {
+        "soundex_num": "S600_7",
+        "count": 62
+      }
+    ],
+    "runtime_s": 7.425939083099365
+  },
+  "train_s3_dist": {
+    "dataset_name": "Train Source 3",
+    "total_rows": 250000,
+    "country_distribution": {
+      "India": 100370,
+      "US": 149630
+    },
+    "name_length_stats": {
+      "mean": 25.218308,
+      "median": 25.0,
+      "p95": 42.0,
+      "max": 81
+    },
+    "addr_length_stats": {
+      "mean": 46.754088,
+      "median": 42.0,
+      "p95": 91.0,
+      "max": 234
+    },
+    "name_token_stats": {
+      "mean": 3.525656,
+      "median": 4.0,
+      "p95": 6.0,
+      "max": 13
+    },
+    "addr_token_stats": {
+      "mean": 7.422253297367071,
+      "median": 6.0,
+      "p95": 14.0,
+      "max": 33
+    },
+    "missing_name_pct": 0.0,
+    "missing_addr_pct": 3.3168,
+    "non_latin_name_pct": 11.5712,
+    "non_latin_addr_pct": 9.052,
+    "numeric_token_availability_pct": 90.7884,
+    "postal_pin_availability_pct": 7.2812,
+    "top_norm_collisions": [
+      {
+        "norm_name": "womens health",
+        "count": 30
+      },
+      {
+        "norm_name": "primary care",
+        "count": 30
+      },
+      {
+        "norm_name": "urgent care",
+        "count": 29
+      },
+      {
+        "norm_name": "pediatric dentistry",
+        "count": 27
+      },
+      {
+        "norm_name": "physical therapy",
+        "count": 23
+      },
+      {
+        "norm_name": "pediatric dental",
+        "count": 22
+      },
+      {
+        "norm_name": "behavioral health",
+        "count": 22
+      },
+      {
+        "norm_name": "internal medicine",
+        "count": 20
+      },
+      {
+        "norm_name": "straight edge",
+        "count": 17
+      },
+      {
+        "norm_name": "department of",
+        "count": 15
+      }
+    ],
+    "top_compact_collisions": [
+      {
+        "compact_name": "vision",
+        "count": 67
+      },
+      {
+        "compact_name": "urgentcare",
+        "count": 64
+      },
+      {
+        "compact_name": "pediatricdentistry",
+        "count": 57
+      },
+      {
+        "compact_name": "womenshealth",
+        "count": 55
+      },
+      {
+        "compact_name": "internalmedicine",
+        "count": 53
+      },
+      {
+        "compact_name": "shree",
+        "count": 53
+      },
+      {
+        "compact_name": "primarycare",
+        "count": 52
+      },
+      {
+        "compact_name": "mumbai",
+        "count": 46
+      },
+      {
+        "compact_name": "premier",
+        "count": 45
+      },
+      {
+        "compact_name": "apex",
+        "count": 45
+      }
+    ],
+    "top_soundex_collisions": [
+      {
+        "soundex_num": "S600_1",
+        "count": 161
+      },
+      {
+        "soundex_num": "S600_3",
+        "count": 139
+      },
+      {
+        "soundex_num": "S600_2",
+        "count": 107
+      },
+      {
+        "soundex_num": "S600_4",
+        "count": 79
+      },
+      {
+        "soundex_num": "S600_5",
+        "count": 77
+      },
+      {
+        "soundex_num": "S530_1",
+        "count": 65
+      },
+      {
+        "soundex_num": "S600_6",
+        "count": 62
+      },
+      {
+        "soundex_num": "S530_3",
+        "count": 61
+      },
+      {
+        "soundex_num": "S500_1",
+        "count": 59
+      },
+      {
+        "soundex_num": "S600_8",
+        "count": 58
+      }
+    ],
+    "runtime_s": 7.17793607711792
+  },
+  "test_s3_dist": {
+    "dataset_name": "Test Source 3",
+    "total_rows": 250000,
+    "country_distribution": {
+      "US": 96221,
+      "France": 35661,
+      "India": 118118
+    },
+    "name_length_stats": {
+      "mean": 25.63912,
+      "median": 25.0,
+      "p95": 42.0,
+      "max": 84
+    },
+    "addr_length_stats": {
+      "mean": 48.683972,
+      "median": 43.0,
+      "p95": 94.0,
+      "max": 235
+    },
+    "name_token_stats": {
+      "mean": 3.594632,
+      "median": 4.0,
+      "p95": 6.0,
+      "max": 12
+    },
+    "addr_token_stats": {
+      "mean": 7.706835035104161,
+      "median": 7.0,
+      "p95": 15.0,
+      "max": 43
+    },
+    "missing_name_pct": 0.0,
+    "missing_addr_pct": 2.6896,
+    "non_latin_name_pct": 14.4404,
+    "non_latin_addr_pct": 13.688400000000001,
+    "numeric_token_availability_pct": 92.378,
+    "postal_pin_availability_pct": 5.138800000000001,
+    "top_norm_collisions": [
+      {
+        "norm_name": "cc",
+        "count": 21
+      },
+      {
+        "norm_name": "ac",
+        "count": 20
+      },
+      {
+        "norm_name": "lc",
+        "count": 19
+      },
+      {
+        "norm_name": "sc",
+        "count": 19
+      },
+      {
+        "norm_name": "primary care",
+        "count": 17
+      },
+      {
+        "norm_name": "internal medicine",
+        "count": 15
+      },
+      {
+        "norm_name": "pc",
+        "count": 15
+      },
+      {
+        "norm_name": "nantes club",
+        "count": 14
+      },
+      {
+        "norm_name": "behavioral health",
+        "count": 14
+      },
+      {
+        "norm_name": "urgent care",
+        "count": 14
+      }
+    ],
+    "top_compact_collisions": [
+      {
+        "compact_name": "shree",
+        "count": 65
+      },
+      {
+        "compact_name": "newdelhi",
+        "count": 57
+      },
+      {
+        "compact_name": "new",
+        "count": 47
+      },
+      {
+        "compact_name": "mumbai",
+        "count": 44
+      },
+      {
+        "compact_name": "apex",
+        "count": 41
+      },
+      {
+        "compact_name": "krishna",
+        "count": 40
+      },
+      {
+        "compact_name": "sree",
+        "count": 39
+      },
+      {
+        "compact_name": "golden",
+        "count": 38
+      },
+      {
+        "compact_name": "behavioralhealth",
+        "count": 38
+      },
+      {
+        "compact_name": "tech",
+        "count": 38
+      }
+    ],
+    "top_soundex_collisions": [
+      {
+        "soundex_num": "S600_1",
+        "count": 175
+      },
+      {
+        "soundex_num": "S600_3",
+        "count": 154
+      },
+      {
+        "soundex_num": "S600_2",
+        "count": 132
+      },
+      {
+        "soundex_num": "S600_4",
+        "count": 102
+      },
+      {
+        "soundex_num": "S600_5",
+        "count": 95
+      },
+      {
+        "soundex_num": "S530_1",
+        "count": 87
+      },
+      {
+        "soundex_num": "S600_6",
+        "count": 84
+      },
+      {
+        "soundex_num": "S530_2",
+        "count": 77
+      },
+      {
+        "soundex_num": "S600_8",
+        "count": 75
+      },
+      {
+        "soundex_num": "S600_7",
+        "count": 74
+      }
+    ],
+    "runtime_s": 7.179550886154175
+  },
+  "val_blocking_profile": {
+    "method_profiles": [
+      {
+        "method": "exact_compact_name",
+        "runtime_s": 0.13466882705688477,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 9051,
+        "unique_candidates": 9051,
+        "avg_candidates_per_s1": 3.6204
+      },
+      {
+        "method": "exact_normalized_name",
+        "runtime_s": 0.05215930938720703,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 1261,
+        "unique_candidates": 1261,
+        "avg_candidates_per_s1": 0.5044
+      },
+      {
+        "method": "cname8_addr_num",
+        "runtime_s": 0.03681325912475586,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 511,
+        "unique_candidates": 511,
+        "avg_candidates_per_s1": 0.2044
+      },
+      {
+        "method": "f2_words_addr_num",
+        "runtime_s": 0.03834271430969238,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 234,
+        "unique_candidates": 234,
+        "avg_candidates_per_s1": 0.0936
+      },
+      {
+        "method": "method_a_postal_cname",
+        "runtime_s": 0.009143352508544922,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 17,
+        "unique_candidates": 17,
+        "avg_candidates_per_s1": 0.0068
+      },
+      {
+        "method": "method_d_phonetic_soundex",
+        "runtime_s": 0.033472537994384766,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 5015,
+        "unique_candidates": 5015,
+        "avg_candidates_per_s1": 2.006
+      },
+      {
+        "method": "method_e_transliteration",
+        "runtime_s": 0.05093502998352051,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 9322,
+        "unique_candidates": 9322,
+        "avg_candidates_per_s1": 3.7288
+      }
+    ],
+    "total_raw_candidates": 25411,
+    "total_unique_candidates": 14456,
+    "duplicate_candidates": 10955,
+    "candidate_stats": {
+      "mean": 5.7824,
+      "median": 1.0,
+      "p90": 14.0,
+      "p95": 37.04999999999973,
+      "p99": 68.02999999999929,
+      "max": 306
+    },
+    "candidate_buckets": {
+      "0": 1159,
+      "1-5": 853,
+      "6-10": 194,
+      "11-25": 111,
+      "26-50": 124,
+      "51-100": 46,
+      "101-500": 13,
+      "501-1000": 0,
+      "1001-5000": 0,
+      "5000+": 0
+    },
+    "block_size_stats": {
+      "compact_name": {
+        "total_unique_keys": 424285,
+        "top_10_largest_blocks": [
+          {
+            "compact_name": "urgentcare",
+            "count": 129
+          },
+          {
+            "compact_name": "internalmedicine",
+            "count": 111
+          },
+          {
+            "compact_name": "physicaltherapy",
+            "count": 108
+          },
+          {
+            "compact_name": "behavioralhealth",
+            "count": 105
+          },
+          {
+            "compact_name": "primarycare",
+            "count": 105
+          },
+          {
+            "compact_name": "womenshealth",
+            "count": 105
+          },
+          {
+            "compact_name": "vision",
+            "count": 103
+          },
+          {
+            "compact_name": "shree",
+            "count": 103
+          },
+          {
+            "compact_name": "pediatricdental",
+            "count": 101
+          },
+          {
+            "compact_name": "pediatricdentistry",
+            "count": 98
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "compact_name": "urgentcare",
+            "count": 129
+          },
+          {
+            "compact_name": "internalmedicine",
+            "count": 111
+          },
+          {
+            "compact_name": "physicaltherapy",
+            "count": 108
+          },
+          {
+            "compact_name": "behavioralhealth",
+            "count": 105
+          },
+          {
+            "compact_name": "primarycare",
+            "count": 105
+          },
+          {
+            "compact_name": "womenshealth",
+            "count": 105
+          },
+          {
+            "compact_name": "vision",
+            "count": 103
+          },
+          {
+            "compact_name": "shree",
+            "count": 103
+          },
+          {
+            "compact_name": "pediatricdental",
+            "count": 101
+          },
+          {
+            "compact_name": "pediatricdentistry",
+            "count": 98
+          },
+          {
+            "compact_name": "mumbai",
+            "count": 96
+          },
+          {
+            "compact_name": "newdelhi",
+            "count": 91
+          },
+          {
+            "compact_name": "meridian",
+            "count": 89
+          },
+          {
+            "compact_name": "apex",
+            "count": 80
+          },
+          {
+            "compact_name": "pediatric",
+            "count": 80
+          },
+          {
+            "compact_name": "chiropractic",
+            "count": 76
+          },
+          {
+            "compact_name": "earnosethroat",
+            "count": 75
+          },
+          {
+            "compact_name": "dental",
+            "count": 75
+          },
+          {
+            "compact_name": "surgicalcare",
+            "count": 74
+          },
+          {
+            "compact_name": "cardiologycare",
+            "count": 72
+          },
+          {
+            "compact_name": "footankle",
+            "count": 70
+          },
+          {
+            "compact_name": "summit",
+            "count": 70
+          },
+          {
+            "compact_name": "dermatologycare",
+            "count": 70
+          },
+          {
+            "compact_name": "orthopedic",
+            "count": 70
+          },
+          {
+            "compact_name": "eye",
+            "count": 69
+          },
+          {
+            "compact_name": "premier",
+            "count": 68
+          },
+          {
+            "compact_name": "cardiology",
+            "count": 65
+          },
+          {
+            "compact_name": "pediatricdentalcare",
+            "count": 65
+          },
+          {
+            "compact_name": "familycenter",
+            "count": 64
+          },
+          {
+            "compact_name": "family",
+            "count": 64
+          },
+          {
+            "compact_name": "oncology",
+            "count": 61
+          },
+          {
+            "compact_name": "golden",
+            "count": 61
+          },
+          {
+            "compact_name": "visioncare",
+            "count": 61
+          },
+          {
+            "compact_name": "surgical",
+            "count": 60
+          },
+          {
+            "compact_name": "sai",
+            "count": 60
+          },
+          {
+            "compact_name": "dermatology",
+            "count": 60
+          },
+          {
+            "compact_name": "chiropracticcare",
+            "count": 59
+          },
+          {
+            "compact_name": "cascade",
+            "count": 58
+          },
+          {
+            "compact_name": "kolkata",
+            "count": 58
+          },
+          {
+            "compact_name": "urology",
+            "count": 58
+          },
+          {
+            "compact_name": "anchor",
+            "count": 58
+          },
+          {
+            "compact_name": "delhi",
+            "count": 57
+          },
+          {
+            "compact_name": "great",
+            "count": 57
+          },
+          {
+            "compact_name": "eyecare",
+            "count": 57
+          },
+          {
+            "compact_name": "green",
+            "count": 56
+          },
+          {
+            "compact_name": "visioncenter",
+            "count": 56
+          },
+          {
+            "compact_name": "united",
+            "count": 56
+          },
+          {
+            "compact_name": "orthopediccare",
+            "count": 55
+          },
+          {
+            "compact_name": "urologycare",
+            "count": 55
+          },
+          {
+            "compact_name": "dentalcare",
+            "count": 54
+          },
+          {
+            "compact_name": "white",
+            "count": 54
+          },
+          {
+            "compact_name": "south",
+            "count": 53
+          },
+          {
+            "compact_name": "first",
+            "count": 53
+          },
+          {
+            "compact_name": "internalmedicinecare",
+            "count": 53
+          },
+          {
+            "compact_name": "helios",
+            "count": 52
+          },
+          {
+            "compact_name": "cinder",
+            "count": 52
+          },
+          {
+            "compact_name": "sapphire",
+            "count": 52
+          },
+          {
+            "compact_name": "pediatricdentistrycare",
+            "count": 52
+          },
+          {
+            "compact_name": "familycare",
+            "count": 52
+          },
+          {
+            "compact_name": "classic",
+            "count": 52
+          },
+          {
+            "compact_name": "southern",
+            "count": 51
+          },
+          {
+            "compact_name": "prime",
+            "count": 50
+          },
+          {
+            "compact_name": "maa",
+            "count": 50
+          },
+          {
+            "compact_name": "horizon",
+            "count": 50
+          },
+          {
+            "compact_name": "blue",
+            "count": 50
+          },
+          {
+            "compact_name": "bharat",
+            "count": 49
+          },
+          {
+            "compact_name": "citadel",
+            "count": 49
+          },
+          {
+            "compact_name": "pune",
+            "count": 49
+          },
+          {
+            "compact_name": "supreme",
+            "count": 49
+          },
+          {
+            "compact_name": "oncologycare",
+            "count": 49
+          },
+          {
+            "compact_name": "birch",
+            "count": 48
+          },
+          {
+            "compact_name": "balaji",
+            "count": 48
+          },
+          {
+            "compact_name": "north",
+            "count": 47
+          },
+          {
+            "compact_name": "ironclad",
+            "count": 47
+          },
+          {
+            "compact_name": "vanguard",
+            "count": 47
+          },
+          {
+            "compact_name": "digital",
+            "count": 47
+          },
+          {
+            "compact_name": "tech",
+            "count": 47
+          },
+          {
+            "compact_name": "bombay",
+            "count": 46
+          },
+          {
+            "compact_name": "bangalore",
+            "count": 46
+          },
+          {
+            "compact_name": "cornerstone",
+            "count": 46
+          },
+          {
+            "compact_name": "dynamic",
+            "count": 46
+          },
+          {
+            "compact_name": "northwind",
+            "count": 46
+          },
+          {
+            "compact_name": "ember",
+            "count": 46
+          },
+          {
+            "compact_name": "raj",
+            "count": 46
+          },
+          {
+            "compact_name": "footanklecare",
+            "count": 45
+          },
+          {
+            "compact_name": "zenith",
+            "count": 45
+          },
+          {
+            "compact_name": "new",
+            "count": 45
+          },
+          {
+            "compact_name": "real",
+            "count": 45
+          },
+          {
+            "compact_name": "shyam",
+            "count": 45
+          },
+          {
+            "compact_name": "behavioralhealthcare",
+            "count": 45
+          },
+          {
+            "compact_name": "sequoia",
+            "count": 45
+          },
+          {
+            "compact_name": "anand",
+            "count": 45
+          },
+          {
+            "compact_name": "high",
+            "count": 45
+          },
+          {
+            "compact_name": "slate",
+            "count": 45
+          },
+          {
+            "compact_name": "granite",
+            "count": 45
+          },
+          {
+            "compact_name": "womenshealthcare",
+            "count": 45
+          },
+          {
+            "compact_name": "al",
+            "count": 45
+          },
+          {
+            "compact_name": "surgicalpartners",
+            "count": 45
+          },
+          {
+            "compact_name": "raven",
+            "count": 45
+          },
+          {
+            "compact_name": "sterling",
+            "count": 45
+          }
+        ],
+        "blocks_gt_100": 9,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 129
+      },
+      "norm_name": {
+        "total_unique_keys": 467623,
+        "top_10_largest_blocks": [
+          {
+            "norm_name": "urgent care",
+            "count": 58
+          },
+          {
+            "norm_name": "physical therapy",
+            "count": 53
+          },
+          {
+            "norm_name": "primary care",
+            "count": 53
+          },
+          {
+            "norm_name": "womens health",
+            "count": 53
+          },
+          {
+            "norm_name": "behavioral health",
+            "count": 49
+          },
+          {
+            "norm_name": "pediatric dental",
+            "count": 48
+          },
+          {
+            "norm_name": "internal medicine",
+            "count": 44
+          },
+          {
+            "norm_name": "pediatric dentistry",
+            "count": 42
+          },
+          {
+            "norm_name": "straight edge",
+            "count": 33
+          },
+          {
+            "norm_name": "the dent",
+            "count": 32
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "norm_name": "urgent care",
+            "count": 58
+          },
+          {
+            "norm_name": "physical therapy",
+            "count": 53
+          },
+          {
+            "norm_name": "primary care",
+            "count": 53
+          },
+          {
+            "norm_name": "womens health",
+            "count": 53
+          },
+          {
+            "norm_name": "behavioral health",
+            "count": 49
+          },
+          {
+            "norm_name": "pediatric dental",
+            "count": 48
+          },
+          {
+            "norm_name": "internal medicine",
+            "count": 44
+          },
+          {
+            "norm_name": "pediatric dentistry",
+            "count": 42
+          },
+          {
+            "norm_name": "straight edge",
+            "count": 33
+          },
+          {
+            "norm_name": "the dent",
+            "count": 32
+          },
+          {
+            "norm_name": "earnosethroat com",
+            "count": 31
+          },
+          {
+            "norm_name": "ear nose throat",
+            "count": 30
+          },
+          {
+            "norm_name": "foot ankle",
+            "count": 30
+          },
+          {
+            "norm_name": "meridian llc",
+            "count": 26
+          },
+          {
+            "norm_name": "department of",
+            "count": 26
+          },
+          {
+            "norm_name": "commission on",
+            "count": 23
+          },
+          {
+            "norm_name": "main street",
+            "count": 23
+          },
+          {
+            "norm_name": "family center",
+            "count": 23
+          },
+          {
+            "norm_name": "vision physicians",
+            "count": 22
+          },
+          {
+            "norm_name": "asset building",
+            "count": 22
+          },
+          {
+            "norm_name": "oncology partners",
+            "count": 21
+          },
+          {
+            "norm_name": "eye care",
+            "count": 21
+          },
+          {
+            "norm_name": "back alley",
+            "count": 21
+          },
+          {
+            "norm_name": "board of",
+            "count": 20
+          },
+          {
+            "norm_name": "office of",
+            "count": 20
+          },
+          {
+            "norm_name": "ironclad",
+            "count": 20
+          },
+          {
+            "norm_name": "bureau of",
+            "count": 20
+          },
+          {
+            "norm_name": "cinder",
+            "count": 19
+          },
+          {
+            "norm_name": "chiropractic partners",
+            "count": 19
+          },
+          {
+            "norm_name": "surgical partners",
+            "count": 19
+          },
+          {
+            "norm_name": "cardiology care",
+            "count": 19
+          },
+          {
+            "norm_name": "cascade",
+            "count": 18
+          },
+          {
+            "norm_name": "chiropractic care",
+            "count": 18
+          },
+          {
+            "norm_name": "dermatology center",
+            "count": 18
+          },
+          {
+            "norm_name": "pediatric center",
+            "count": 18
+          },
+          {
+            "norm_name": "family partners",
+            "count": 18
+          },
+          {
+            "norm_name": "vision center",
+            "count": 18
+          },
+          {
+            "norm_name": "rev it up",
+            "count": 17
+          },
+          {
+            "norm_name": "revitup com",
+            "count": 17
+          },
+          {
+            "norm_name": "dermatology care",
+            "count": 17
+          },
+          {
+            "norm_name": "oncology care",
+            "count": 17
+          },
+          {
+            "norm_name": "cardiology associates",
+            "count": 17
+          },
+          {
+            "norm_name": "surgical care",
+            "count": 17
+          },
+          {
+            "norm_name": "oncology physicians",
+            "count": 17
+          },
+          {
+            "norm_name": "helios",
+            "count": 17
+          },
+          {
+            "norm_name": "orthopedic physicians",
+            "count": 16
+          },
+          {
+            "norm_name": "autism assistance",
+            "count": 16
+          },
+          {
+            "norm_name": "foundry llc",
+            "count": 16
+          },
+          {
+            "norm_name": "chiropractic clinic",
+            "count": 16
+          },
+          {
+            "norm_name": "eye partners",
+            "count": 16
+          },
+          {
+            "norm_name": "rev it",
+            "count": 16
+          },
+          {
+            "norm_name": "ember",
+            "count": 16
+          },
+          {
+            "norm_name": "cardiology group",
+            "count": 16
+          },
+          {
+            "norm_name": "surgical group",
+            "count": 16
+          },
+          {
+            "norm_name": "dental group",
+            "count": 16
+          },
+          {
+            "norm_name": "eye group",
+            "count": 16
+          },
+          {
+            "norm_name": "slate llc",
+            "count": 16
+          },
+          {
+            "norm_name": "vision medicine",
+            "count": 15
+          },
+          {
+            "norm_name": "dermatology partners",
+            "count": 15
+          },
+          {
+            "norm_name": "chiropractic medicine",
+            "count": 15
+          },
+          {
+            "norm_name": "pediatric dental care",
+            "count": 15
+          },
+          {
+            "norm_name": "dental associates",
+            "count": 15
+          },
+          {
+            "norm_name": "vision partners",
+            "count": 15
+          },
+          {
+            "norm_name": "human rights",
+            "count": 15
+          },
+          {
+            "norm_name": "forge",
+            "count": 15
+          },
+          {
+            "norm_name": "cardinal llc",
+            "count": 15
+          },
+          {
+            "norm_name": "dermatology specialists",
+            "count": 15
+          },
+          {
+            "norm_name": "foot",
+            "count": 15
+          },
+          {
+            "norm_name": "division of",
+            "count": 15
+          },
+          {
+            "norm_name": "family specialists",
+            "count": 15
+          },
+          {
+            "norm_name": "surgical clinic",
+            "count": 15
+          },
+          {
+            "norm_name": "family care",
+            "count": 14
+          },
+          {
+            "norm_name": "family group",
+            "count": 14
+          },
+          {
+            "norm_name": "summit",
+            "count": 14
+          },
+          {
+            "norm_name": "zephyr",
+            "count": 14
+          },
+          {
+            "norm_name": "cornerstone",
+            "count": 14
+          },
+          {
+            "norm_name": "a cure",
+            "count": 14
+          },
+          {
+            "norm_name": "vision",
+            "count": 14
+          },
+          {
+            "norm_name": "sapphire llc",
+            "count": 14
+          },
+          {
+            "norm_name": "orthopedic center",
+            "count": 14
+          },
+          {
+            "norm_name": "internal medicine care",
+            "count": 14
+          },
+          {
+            "norm_name": "sapphire",
+            "count": 14
+          },
+          {
+            "norm_name": "chiropractic associates",
+            "count": 14
+          },
+          {
+            "norm_name": "vision health",
+            "count": 14
+          },
+          {
+            "norm_name": "si",
+            "count": 14
+          },
+          {
+            "norm_name": "urology care",
+            "count": 14
+          },
+          {
+            "norm_name": "urgent care partners",
+            "count": 14
+          },
+          {
+            "norm_name": "dermatology health",
+            "count": 14
+          },
+          {
+            "norm_name": "dermatology medicine",
+            "count": 14
+          },
+          {
+            "norm_name": "anchor",
+            "count": 14
+          },
+          {
+            "norm_name": "surgical health",
+            "count": 14
+          },
+          {
+            "norm_name": "physical therapy medicine llc",
+            "count": 13
+          },
+          {
+            "norm_name": "granite",
+            "count": 13
+          },
+          {
+            "norm_name": "economic development",
+            "count": 13
+          },
+          {
+            "norm_name": "dental clinic",
+            "count": 13
+          },
+          {
+            "norm_name": "urgent care associates",
+            "count": 13
+          },
+          {
+            "norm_name": "oncology group",
+            "count": 13
+          },
+          {
+            "norm_name": "beacon",
+            "count": 13
+          },
+          {
+            "norm_name": "ear nose throat clinic",
+            "count": 13
+          },
+          {
+            "norm_name": "redwood llc",
+            "count": 13
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 58
+      },
+      "cname8_num": {
+        "total_unique_keys": 427537,
+        "top_10_largest_blocks": [
+          {
+            "cname8_num": "hyderaba_8",
+            "count": 41
+          },
+          {
+            "cname8_num": "newdelhi_1",
+            "count": 35
+          },
+          {
+            "cname8_num": "hyderaba_1",
+            "count": 33
+          },
+          {
+            "cname8_num": "bangalor_3",
+            "count": 31
+          },
+          {
+            "cname8_num": "newdelhi_2",
+            "count": 26
+          },
+          {
+            "cname8_num": "newdelhi_3",
+            "count": 26
+          },
+          {
+            "cname8_num": "bangalor_2",
+            "count": 25
+          },
+          {
+            "cname8_num": "bangalor_1",
+            "count": 24
+          },
+          {
+            "cname8_num": "hyderaba_2",
+            "count": 21
+          },
+          {
+            "cname8_num": "tirupati_1",
+            "count": 21
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "cname8_num": "hyderaba_8",
+            "count": 41
+          },
+          {
+            "cname8_num": "newdelhi_1",
+            "count": 35
+          },
+          {
+            "cname8_num": "hyderaba_1",
+            "count": 33
+          },
+          {
+            "cname8_num": "bangalor_3",
+            "count": 31
+          },
+          {
+            "cname8_num": "newdelhi_2",
+            "count": 26
+          },
+          {
+            "cname8_num": "newdelhi_3",
+            "count": 26
+          },
+          {
+            "cname8_num": "bangalor_2",
+            "count": 25
+          },
+          {
+            "cname8_num": "bangalor_1",
+            "count": 24
+          },
+          {
+            "cname8_num": "hyderaba_2",
+            "count": 21
+          },
+          {
+            "cname8_num": "tirupati_1",
+            "count": 21
+          },
+          {
+            "cname8_num": "newdelhi_4",
+            "count": 21
+          },
+          {
+            "cname8_num": "innovati_1",
+            "count": 21
+          },
+          {
+            "cname8_num": "hyderaba_6",
+            "count": 19
+          },
+          {
+            "cname8_num": "southern_1",
+            "count": 18
+          },
+          {
+            "cname8_num": "creative_3",
+            "count": 17
+          },
+          {
+            "cname8_num": "universa_1",
+            "count": 17
+          },
+          {
+            "cname8_num": "bangalor_6",
+            "count": 17
+          },
+          {
+            "cname8_num": "southern_3",
+            "count": 17
+          },
+          {
+            "cname8_num": "bangalor_4",
+            "count": 16
+          },
+          {
+            "cname8_num": "\u092a\u093e\u092f\u094b\u0928\u093f\u092f\u0930_2",
+            "count": 16
+          },
+          {
+            "cname8_num": "tirupati_3",
+            "count": 16
+          },
+          {
+            "cname8_num": "newdelhi_5",
+            "count": 15
+          },
+          {
+            "cname8_num": "newdelhi_8",
+            "count": 15
+          },
+          {
+            "cname8_num": "\u092f\u0942\u0928\u093f\u0935\u0930\u094d\u0938_1",
+            "count": 15
+          },
+          {
+            "cname8_num": "innovati_3",
+            "count": 15
+          },
+          {
+            "cname8_num": "hyderaba_3",
+            "count": 14
+          },
+          {
+            "cname8_num": "creative_8",
+            "count": 14
+          },
+          {
+            "cname8_num": "creative_1",
+            "count": 14
+          },
+          {
+            "cname8_num": "marketin_3",
+            "count": 13
+          },
+          {
+            "cname8_num": "engineer_4",
+            "count": 13
+          },
+          {
+            "cname8_num": "develope_1",
+            "count": 13
+          },
+          {
+            "cname8_num": "foundati_1",
+            "count": 13
+          },
+          {
+            "cname8_num": "hyderaba_5",
+            "count": 13
+          },
+          {
+            "cname8_num": "innovati_8",
+            "count": 13
+          },
+          {
+            "cname8_num": "bangalor_9",
+            "count": 12
+          },
+          {
+            "cname8_num": "creative_5",
+            "count": 12
+          },
+          {
+            "cname8_num": "\u092a\u093e\u092f\u094b\u0928\u093f\u092f\u0930_3",
+            "count": 12
+          },
+          {
+            "cname8_num": "bangalor_5",
+            "count": 12
+          },
+          {
+            "cname8_num": "develope_3",
+            "count": 12
+          },
+          {
+            "cname8_num": "pediatri_100",
+            "count": 12
+          },
+          {
+            "cname8_num": "pediatri_2",
+            "count": 12
+          },
+          {
+            "cname8_num": "ventures_3",
+            "count": 12
+          },
+          {
+            "cname8_num": "innovati_2",
+            "count": 12
+          },
+          {
+            "cname8_num": "southern_2",
+            "count": 12
+          },
+          {
+            "cname8_num": "secunder_1",
+            "count": 11
+          },
+          {
+            "cname8_num": "\u0938\u094d\u0935\u0938\u094d\u0924\u093f\u0915_4",
+            "count": 11
+          },
+          {
+            "cname8_num": "newdelhi_6",
+            "count": 11
+          },
+          {
+            "cname8_num": "bangalor_10",
+            "count": 11
+          },
+          {
+            "cname8_num": "pediatri_112",
+            "count": 11
+          },
+          {
+            "cname8_num": "hyderaba_7",
+            "count": 11
+          },
+          {
+            "cname8_num": "pediatri_108",
+            "count": 11
+          },
+          {
+            "cname8_num": "universa_3",
+            "count": 11
+          },
+          {
+            "cname8_num": "pediatri_21",
+            "count": 10
+          },
+          {
+            "cname8_num": "hyderaba_4",
+            "count": 10
+          },
+          {
+            "cname8_num": "software_3",
+            "count": 10
+          },
+          {
+            "cname8_num": "tirupati_4",
+            "count": 10
+          },
+          {
+            "cname8_num": "pediatri_20",
+            "count": 10
+          },
+          {
+            "cname8_num": "\u092b\u0949\u0930\u094d\u091a\u094d\u092f\u0942_3",
+            "count": 10
+          },
+          {
+            "cname8_num": "healthca_1",
+            "count": 10
+          },
+          {
+            "cname8_num": "southern_4",
+            "count": 10
+          },
+          {
+            "cname8_num": "pediatri_5",
+            "count": 10
+          },
+          {
+            "cname8_num": "pediatri_11",
+            "count": 10
+          },
+          {
+            "cname8_num": "\u092b\u0949\u0930\u094d\u091a\u094d\u092f\u0942_1",
+            "count": 10
+          },
+          {
+            "cname8_num": "engineer_3",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u0921\u093e\u092f\u0928\u093e\u092e\u093f\u0915_3",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u092a\u093e\u092f\u094b\u0928\u093f\u092f\u0930_4",
+            "count": 9
+          },
+          {
+            "cname8_num": "tirupati_2",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u0907\u0902\u091f\u0930\u0928\u0947\u0936\u0928_1",
+            "count": 9
+          },
+          {
+            "cname8_num": "bangalor_21",
+            "count": 9
+          },
+          {
+            "cname8_num": "pediatri_12",
+            "count": 9
+          },
+          {
+            "cname8_num": "pediatri_14",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u0938\u094d\u0935\u0938\u094d\u0924\u093f\u0915_3",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u0907\u0928\u094b\u0935\u0947\u091f\u093f\u0935_1",
+            "count": 9
+          },
+          {
+            "cname8_num": "coimbato_1",
+            "count": 9
+          },
+          {
+            "cname8_num": "bangalor_15",
+            "count": 9
+          },
+          {
+            "cname8_num": "producer_2",
+            "count": 9
+          },
+          {
+            "cname8_num": "pediatri_101",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u0907\u0928\u094b\u0935\u0947\u091f\u093f\u0935_3",
+            "count": 9
+          },
+          {
+            "cname8_num": "\u092a\u093e\u092f\u094b\u0928\u093f\u092f\u0930_1",
+            "count": 9
+          },
+          {
+            "cname8_num": "tirupati_8",
+            "count": 9
+          },
+          {
+            "cname8_num": "shaikpet_1",
+            "count": 9
+          },
+          {
+            "cname8_num": "southern_6",
+            "count": 9
+          },
+          {
+            "cname8_num": "southern_9",
+            "count": 9
+          },
+          {
+            "cname8_num": "southern_14",
+            "count": 9
+          },
+          {
+            "cname8_num": "khairata_8",
+            "count": 9
+          },
+          {
+            "cname8_num": "newdelhi_10",
+            "count": 9
+          },
+          {
+            "cname8_num": "tirupati_6",
+            "count": 8
+          },
+          {
+            "cname8_num": "tirupati_7",
+            "count": 8
+          },
+          {
+            "cname8_num": "\u092a\u094d\u0930\u0940\u092e\u093f\u092f\u0930_1",
+            "count": 8
+          },
+          {
+            "cname8_num": "\u092a\u094d\u0930\u0940\u092e\u093f\u092f\u0930_3",
+            "count": 8
+          },
+          {
+            "cname8_num": "creative_16",
+            "count": 8
+          },
+          {
+            "cname8_num": "pediatri_46",
+            "count": 8
+          },
+          {
+            "cname8_num": "infrastr_1",
+            "count": 8
+          },
+          {
+            "cname8_num": "newdelhi_18",
+            "count": 8
+          },
+          {
+            "cname8_num": "\u092f\u0942\u0928\u093e\u0907\u091f\u0947\u0921_2",
+            "count": 8
+          },
+          {
+            "cname8_num": "newdelhi_26",
+            "count": 8
+          },
+          {
+            "cname8_num": "\u092f\u0942\u0928\u093f\u0935\u0930\u094d\u0938_2",
+            "count": 8
+          },
+          {
+            "cname8_num": "producer_4",
+            "count": 8
+          },
+          {
+            "cname8_num": "universa_6",
+            "count": 8
+          },
+          {
+            "cname8_num": "marketin_9",
+            "count": 8
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 41
+      },
+      "f2_num": {
+        "total_unique_keys": 436775,
+        "top_10_largest_blocks": [
+          {
+            "f2_num": "new_delhi_1",
+            "count": 30
+          },
+          {
+            "f2_num": "new_delhi_2",
+            "count": 24
+          },
+          {
+            "f2_num": "new_delhi_3",
+            "count": 19
+          },
+          {
+            "f2_num": "new_delhi_4",
+            "count": 19
+          },
+          {
+            "f2_num": "new_delhi_8",
+            "count": 14
+          },
+          {
+            "f2_num": "new_delhi_5",
+            "count": 12
+          },
+          {
+            "f2_num": "new_delhi_6",
+            "count": 10
+          },
+          {
+            "f2_num": "new_delhi_26",
+            "count": 8
+          },
+          {
+            "f2_num": "physical_therapy_8",
+            "count": 8
+          },
+          {
+            "f2_num": "new_delhi_10",
+            "count": 7
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "f2_num": "new_delhi_1",
+            "count": 30
+          },
+          {
+            "f2_num": "new_delhi_2",
+            "count": 24
+          },
+          {
+            "f2_num": "new_delhi_3",
+            "count": 19
+          },
+          {
+            "f2_num": "new_delhi_4",
+            "count": 19
+          },
+          {
+            "f2_num": "new_delhi_8",
+            "count": 14
+          },
+          {
+            "f2_num": "new_delhi_5",
+            "count": 12
+          },
+          {
+            "f2_num": "new_delhi_6",
+            "count": 10
+          },
+          {
+            "f2_num": "new_delhi_26",
+            "count": 8
+          },
+          {
+            "f2_num": "physical_therapy_8",
+            "count": 8
+          },
+          {
+            "f2_num": "new_delhi_10",
+            "count": 7
+          },
+          {
+            "f2_num": "new_delhi_30",
+            "count": 7
+          },
+          {
+            "f2_num": "new_delhi_21",
+            "count": 7
+          },
+          {
+            "f2_num": "new_delhi_18",
+            "count": 7
+          },
+          {
+            "f2_num": "pune_city_3",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_14",
+            "count": 6
+          },
+          {
+            "f2_num": "ear_nose_104",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_59",
+            "count": 6
+          },
+          {
+            "f2_num": "ear_nose_112",
+            "count": 6
+          },
+          {
+            "f2_num": "bangalore_north_3",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_80",
+            "count": 6
+          },
+          {
+            "f2_num": "womens_health_12",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_13",
+            "count": 6
+          },
+          {
+            "f2_num": "bangalore_north_19",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_17",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_41",
+            "count": 6
+          },
+          {
+            "f2_num": "new_delhi_25",
+            "count": 6
+          },
+          {
+            "f2_num": "internal_medicine_12",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_42",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_52",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_15",
+            "count": 5
+          },
+          {
+            "f2_num": "pediatric_dental_112",
+            "count": 5
+          },
+          {
+            "f2_num": "physical_therapy_102",
+            "count": 5
+          },
+          {
+            "f2_num": "urgent_care_14",
+            "count": 5
+          },
+          {
+            "f2_num": "womens_health_7",
+            "count": 5
+          },
+          {
+            "f2_num": "womens_health_2",
+            "count": 5
+          },
+          {
+            "f2_num": "bangalore_south_3",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_9",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_11",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_34",
+            "count": 5
+          },
+          {
+            "f2_num": "behavioral_health_1",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_19",
+            "count": 5
+          },
+          {
+            "f2_num": "pune_city_302",
+            "count": 5
+          },
+          {
+            "f2_num": "physical_therapy_106",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_48",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_28",
+            "count": 5
+          },
+          {
+            "f2_num": "new_delhi_12",
+            "count": 5
+          },
+          {
+            "f2_num": "\u092f\u0942\u0928\u093e\u0907\u091f\u0947\u0921_\u0907\u0928\u094d\u0935\u0947\u0938\u094d\u091f\u092e\u0947\u0902\u091f\u094d\u0938_503",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_40",
+            "count": 4
+          },
+          {
+            "f2_num": "pediatric_dental_130",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_20",
+            "count": 4
+          },
+          {
+            "f2_num": "pediatric_dentistry_601",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_124",
+            "count": 4
+          },
+          {
+            "f2_num": "ear_nose_128",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_45",
+            "count": 4
+          },
+          {
+            "f2_num": "physical_therapy_29",
+            "count": 4
+          },
+          {
+            "f2_num": "bangalore_south_6",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_22",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_66",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_112",
+            "count": 4
+          },
+          {
+            "f2_num": "physical_therapy_10",
+            "count": 4
+          },
+          {
+            "f2_num": "pune_city_12",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_62",
+            "count": 4
+          },
+          {
+            "f2_num": "tri_state_105",
+            "count": 4
+          },
+          {
+            "f2_num": "pediatric_dental_107",
+            "count": 4
+          },
+          {
+            "f2_num": "urgent_care_106",
+            "count": 4
+          },
+          {
+            "f2_num": "shiv_software_1",
+            "count": 4
+          },
+          {
+            "f2_num": "the_dent_1",
+            "count": 4
+          },
+          {
+            "f2_num": "new_life_5",
+            "count": 4
+          },
+          {
+            "f2_num": "pediatric_dentistry_108",
+            "count": 4
+          },
+          {
+            "f2_num": "womens_health_40",
+            "count": 4
+          },
+          {
+            "f2_num": "ear_nose_501",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_79",
+            "count": 4
+          },
+          {
+            "f2_num": "primary_care_12",
+            "count": 4
+          },
+          {
+            "f2_num": "navi_mumbai_1",
+            "count": 4
+          },
+          {
+            "f2_num": "indore_technologies_10",
+            "count": 4
+          },
+          {
+            "f2_num": "behavioral_health_82",
+            "count": 4
+          },
+          {
+            "f2_num": "internal_medicine_312",
+            "count": 4
+          },
+          {
+            "f2_num": "internal_medicine_101",
+            "count": 4
+          },
+          {
+            "f2_num": "foot_ankle_19",
+            "count": 4
+          },
+          {
+            "f2_num": "physical_therapy_12",
+            "count": 4
+          },
+          {
+            "f2_num": "physical_therapy_47",
+            "count": 4
+          },
+          {
+            "f2_num": "private_new_1",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_39",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_101",
+            "count": 4
+          },
+          {
+            "f2_num": "ear_nose_107",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_27",
+            "count": 4
+          },
+          {
+            "f2_num": "internal_medicine_33",
+            "count": 4
+          },
+          {
+            "f2_num": "behavioral_health_7",
+            "count": 4
+          },
+          {
+            "f2_num": "ear_nose_16",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_16",
+            "count": 4
+          },
+          {
+            "f2_num": "tri_state_33",
+            "count": 4
+          },
+          {
+            "f2_num": "pune_city_1",
+            "count": 4
+          },
+          {
+            "f2_num": "pediatric_dental_11",
+            "count": 4
+          },
+          {
+            "f2_num": "pediatric_dental_26",
+            "count": 4
+          },
+          {
+            "f2_num": "ear_nose_10",
+            "count": 4
+          },
+          {
+            "f2_num": "womens_health_16",
+            "count": 4
+          },
+          {
+            "f2_num": "\u0915\u094d\u0930\u093f\u090f\u091f\u093f\u0935_\u0938\u0949\u092b\u094d\u091f\u0935\u0947\u092f\u0930_2",
+            "count": 4
+          },
+          {
+            "f2_num": "new_delhi_31",
+            "count": 4
+          },
+          {
+            "f2_num": "internal_medicine_11",
+            "count": 4
+          },
+          {
+            "f2_num": "department_of_4",
+            "count": 4
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 30
+      },
+      "pin_cname4": {
+        "total_unique_keys": 35586,
+        "top_10_largest_blocks": [
+          {
+            "pin_cname4": "415193_hogu",
+            "count": 4
+          },
+          {
+            "pin_cname4": "110524_hora",
+            "count": 3
+          },
+          {
+            "pin_cname4": "23978_iven",
+            "count": 3
+          },
+          {
+            "pin_cname4": "17212_hous",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14000_east",
+            "count": 3
+          },
+          {
+            "pin_cname4": "19626_leig",
+            "count": 3
+          },
+          {
+            "pin_cname4": "11211_silv",
+            "count": 3
+          },
+          {
+            "pin_cname4": "13910_tmwm",
+            "count": 3
+          },
+          {
+            "pin_cname4": "16970_pedi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "00106_medi",
+            "count": 3
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "pin_cname4": "415193_hogu",
+            "count": 4
+          },
+          {
+            "pin_cname4": "110524_hora",
+            "count": 3
+          },
+          {
+            "pin_cname4": "23978_iven",
+            "count": 3
+          },
+          {
+            "pin_cname4": "17212_hous",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14000_east",
+            "count": 3
+          },
+          {
+            "pin_cname4": "19626_leig",
+            "count": 3
+          },
+          {
+            "pin_cname4": "11211_silv",
+            "count": 3
+          },
+          {
+            "pin_cname4": "13910_tmwm",
+            "count": 3
+          },
+          {
+            "pin_cname4": "16970_pedi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "00106_medi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14024_opti",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14604_erns",
+            "count": 3
+          },
+          {
+            "pin_cname4": "19282_baya",
+            "count": 3
+          },
+          {
+            "pin_cname4": "11435_sull",
+            "count": 3
+          },
+          {
+            "pin_cname4": "228664_nine",
+            "count": 3
+          },
+          {
+            "pin_cname4": "12155_ebon",
+            "count": 3
+          },
+          {
+            "pin_cname4": "39231_pett",
+            "count": 3
+          },
+          {
+            "pin_cname4": "17007_orba",
+            "count": 3
+          },
+          {
+            "pin_cname4": "18660_mcmu",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14118_jarl",
+            "count": 3
+          },
+          {
+            "pin_cname4": "43814_visi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "12019_huma",
+            "count": 3
+          },
+          {
+            "pin_cname4": "17858_colo",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14000_wild",
+            "count": 3
+          },
+          {
+            "pin_cname4": "26660_hung",
+            "count": 3
+          },
+          {
+            "pin_cname4": "11061_mast",
+            "count": 3
+          },
+          {
+            "pin_cname4": "11130_firs",
+            "count": 3
+          },
+          {
+            "pin_cname4": "591509_inno",
+            "count": 3
+          },
+          {
+            "pin_cname4": "30815_hele",
+            "count": 3
+          },
+          {
+            "pin_cname4": "21602_moun",
+            "count": 3
+          },
+          {
+            "pin_cname4": "16970_mill",
+            "count": 3
+          },
+          {
+            "pin_cname4": "005916_kenn",
+            "count": 3
+          },
+          {
+            "pin_cname4": "10384_hard",
+            "count": 3
+          },
+          {
+            "pin_cname4": "56402_well",
+            "count": 3
+          },
+          {
+            "pin_cname4": "003003_lope",
+            "count": 3
+          },
+          {
+            "pin_cname4": "19963_urba",
+            "count": 3
+          },
+          {
+            "pin_cname4": "21534_high",
+            "count": 2
+          },
+          {
+            "pin_cname4": "26310_cynt",
+            "count": 2
+          },
+          {
+            "pin_cname4": "17480_jaco",
+            "count": 2
+          },
+          {
+            "pin_cname4": "15410_rock",
+            "count": 2
+          },
+          {
+            "pin_cname4": "17046_bron",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12627_vujt",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10048_stap",
+            "count": 2
+          },
+          {
+            "pin_cname4": "49943_mart",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00219_orth",
+            "count": 2
+          },
+          {
+            "pin_cname4": "19550_hend",
+            "count": 2
+          },
+          {
+            "pin_cname4": "16432_nati",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10816_pedi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "20002_buia",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11802_down",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12834_rock",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11901_mccl",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13429_fire",
+            "count": 2
+          },
+          {
+            "pin_cname4": "27733_earn",
+            "count": 2
+          },
+          {
+            "pin_cname4": "34548_good",
+            "count": 2
+          },
+          {
+            "pin_cname4": "28296_nati",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00135_bach",
+            "count": 2
+          },
+          {
+            "pin_cname4": "04385_5ain",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11160_syns",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11804_plat",
+            "count": 2
+          },
+          {
+            "pin_cname4": "25412_joan",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13221_prec",
+            "count": 2
+          },
+          {
+            "pin_cname4": "28951_robi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "07101_trin",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11516_bail",
+            "count": 2
+          },
+          {
+            "pin_cname4": "18879_main",
+            "count": 2
+          },
+          {
+            "pin_cname4": "16969_virg",
+            "count": 2
+          },
+          {
+            "pin_cname4": "18331_moun",
+            "count": 2
+          },
+          {
+            "pin_cname4": "21270_pich",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12504_silv",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10265_cust",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00102_gres",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00600_pedi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14446_ling",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10024_bonn",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13001_will",
+            "count": 2
+          },
+          {
+            "pin_cname4": "09805_clau",
+            "count": 2
+          },
+          {
+            "pin_cname4": "18417_dnfi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10519_swee",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12866_heri",
+            "count": 2
+          },
+          {
+            "pin_cname4": "17754_hawk",
+            "count": 2
+          },
+          {
+            "pin_cname4": "22285_derm",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14133_mjno",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12916_fxel",
+            "count": 2
+          },
+          {
+            "pin_cname4": "20295_gala",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10935_mart",
+            "count": 2
+          },
+          {
+            "pin_cname4": "22510_silv",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13610_koca",
+            "count": 2
+          },
+          {
+            "pin_cname4": "26520_flyn",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12500_crys",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13502_pete",
+            "count": 2
+          },
+          {
+            "pin_cname4": "007034_gran",
+            "count": 2
+          },
+          {
+            "pin_cname4": "001302_stap",
+            "count": 2
+          },
+          {
+            "pin_cname4": "30597_derm",
+            "count": 2
+          },
+          {
+            "pin_cname4": "24128_garc",
+            "count": 2
+          },
+          {
+            "pin_cname4": "23808_secu",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00735_lapl",
+            "count": 2
+          },
+          {
+            "pin_cname4": "16501_inno",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10740_1815",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10935_earn",
+            "count": 2
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 4
+      },
+      "soundex_num": {
+        "total_unique_keys": 328904,
+        "top_10_largest_blocks": [
+          {
+            "soundex_num": "S600_1",
+            "count": 305
+          },
+          {
+            "soundex_num": "S600_3",
+            "count": 266
+          },
+          {
+            "soundex_num": "S600_2",
+            "count": 221
+          },
+          {
+            "soundex_num": "S600_4",
+            "count": 136
+          },
+          {
+            "soundex_num": "S600_5",
+            "count": 133
+          },
+          {
+            "soundex_num": "S600_6",
+            "count": 124
+          },
+          {
+            "soundex_num": "S530_3",
+            "count": 115
+          },
+          {
+            "soundex_num": "S530_1",
+            "count": 114
+          },
+          {
+            "soundex_num": "S500_1",
+            "count": 106
+          },
+          {
+            "soundex_num": "S600_8",
+            "count": 105
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "soundex_num": "S600_1",
+            "count": 305
+          },
+          {
+            "soundex_num": "S600_3",
+            "count": 266
+          },
+          {
+            "soundex_num": "S600_2",
+            "count": 221
+          },
+          {
+            "soundex_num": "S600_4",
+            "count": 136
+          },
+          {
+            "soundex_num": "S600_5",
+            "count": 133
+          },
+          {
+            "soundex_num": "S600_6",
+            "count": 124
+          },
+          {
+            "soundex_num": "S530_3",
+            "count": 115
+          },
+          {
+            "soundex_num": "S530_1",
+            "count": 114
+          },
+          {
+            "soundex_num": "S500_1",
+            "count": 106
+          },
+          {
+            "soundex_num": "S600_8",
+            "count": 105
+          },
+          {
+            "soundex_num": "S600_7",
+            "count": 95
+          },
+          {
+            "soundex_num": "S600_10",
+            "count": 94
+          },
+          {
+            "soundex_num": "S600_9",
+            "count": 86
+          },
+          {
+            "soundex_num": "S530_2",
+            "count": 84
+          },
+          {
+            "soundex_num": "S500_3",
+            "count": 80
+          },
+          {
+            "soundex_num": "I530_1",
+            "count": 77
+          },
+          {
+            "soundex_num": "S600_11",
+            "count": 77
+          },
+          {
+            "soundex_num": "I530_3",
+            "count": 70
+          },
+          {
+            "soundex_num": "S600_12",
+            "count": 65
+          },
+          {
+            "soundex_num": "S500_2",
+            "count": 65
+          },
+          {
+            "soundex_num": "S600_15",
+            "count": 64
+          },
+          {
+            "soundex_num": "S530_4",
+            "count": 61
+          },
+          {
+            "soundex_num": "N000_1",
+            "count": 60
+          },
+          {
+            "soundex_num": "I530_2",
+            "count": 58
+          },
+          {
+            "soundex_num": "S600_16",
+            "count": 58
+          },
+          {
+            "soundex_num": "S530_8",
+            "count": 57
+          },
+          {
+            "soundex_num": "S100_3",
+            "count": 56
+          },
+          {
+            "soundex_num": "S600_14",
+            "count": 56
+          },
+          {
+            "soundex_num": "S600_17",
+            "count": 56
+          },
+          {
+            "soundex_num": "S600_21",
+            "count": 56
+          },
+          {
+            "soundex_num": "S000_3",
+            "count": 54
+          },
+          {
+            "soundex_num": "S530_5",
+            "count": 53
+          },
+          {
+            "soundex_num": "S600_13",
+            "count": 53
+          },
+          {
+            "soundex_num": "R200_1",
+            "count": 52
+          },
+          {
+            "soundex_num": "T200_3",
+            "count": 51
+          },
+          {
+            "soundex_num": "T200_1",
+            "count": 50
+          },
+          {
+            "soundex_num": "S600_19",
+            "count": 49
+          },
+          {
+            "soundex_num": "C600_1",
+            "count": 48
+          },
+          {
+            "soundex_num": "M510_1",
+            "count": 48
+          },
+          {
+            "soundex_num": "N000_2",
+            "count": 48
+          },
+          {
+            "soundex_num": "N000_3",
+            "count": 47
+          },
+          {
+            "soundex_num": "S600_24",
+            "count": 47
+          },
+          {
+            "soundex_num": "S530_6",
+            "count": 47
+          },
+          {
+            "soundex_num": "S530_7",
+            "count": 47
+          },
+          {
+            "soundex_num": "N000_4",
+            "count": 46
+          },
+          {
+            "soundex_num": "T200_2",
+            "count": 46
+          },
+          {
+            "soundex_num": "S530_12",
+            "count": 45
+          },
+          {
+            "soundex_num": "S600_20",
+            "count": 45
+          },
+          {
+            "soundex_num": "S600_22",
+            "count": 44
+          },
+          {
+            "soundex_num": "S300_1",
+            "count": 44
+          },
+          {
+            "soundex_num": "S600_23",
+            "count": 44
+          },
+          {
+            "soundex_num": "S500_4",
+            "count": 44
+          },
+          {
+            "soundex_num": "S600_25",
+            "count": 44
+          },
+          {
+            "soundex_num": "S530_10",
+            "count": 43
+          },
+          {
+            "soundex_num": "I530_5",
+            "count": 42
+          },
+          {
+            "soundex_num": "S100_1",
+            "count": 42
+          },
+          {
+            "soundex_num": "S600_18",
+            "count": 42
+          },
+          {
+            "soundex_num": "M510_3",
+            "count": 42
+          },
+          {
+            "soundex_num": "C536_1",
+            "count": 42
+          },
+          {
+            "soundex_num": "H361_8",
+            "count": 42
+          },
+          {
+            "soundex_num": "J000_3",
+            "count": 42
+          },
+          {
+            "soundex_num": "C536_3",
+            "count": 41
+          },
+          {
+            "soundex_num": "S600_27",
+            "count": 41
+          },
+          {
+            "soundex_num": "S000_1",
+            "count": 40
+          },
+          {
+            "soundex_num": "S500_5",
+            "count": 40
+          },
+          {
+            "soundex_num": "J000_1",
+            "count": 39
+          },
+          {
+            "soundex_num": "I530_6",
+            "count": 39
+          },
+          {
+            "soundex_num": "S500_7",
+            "count": 39
+          },
+          {
+            "soundex_num": "S600_32",
+            "count": 39
+          },
+          {
+            "soundex_num": "S500_9",
+            "count": 38
+          },
+          {
+            "soundex_num": "I530_4",
+            "count": 38
+          },
+          {
+            "soundex_num": "S530_9",
+            "count": 38
+          },
+          {
+            "soundex_num": "R400_1",
+            "count": 38
+          },
+          {
+            "soundex_num": "S500_8",
+            "count": 38
+          },
+          {
+            "soundex_num": "S600_28",
+            "count": 37
+          },
+          {
+            "soundex_num": "B524_3",
+            "count": 37
+          },
+          {
+            "soundex_num": "S530_13",
+            "count": 37
+          },
+          {
+            "soundex_num": "B420_3",
+            "count": 36
+          },
+          {
+            "soundex_num": "S150_3",
+            "count": 36
+          },
+          {
+            "soundex_num": "L250_3",
+            "count": 36
+          },
+          {
+            "soundex_num": "S150_1",
+            "count": 36
+          },
+          {
+            "soundex_num": "S360_1",
+            "count": 35
+          },
+          {
+            "soundex_num": "R200_2",
+            "count": 35
+          },
+          {
+            "soundex_num": "N000_5",
+            "count": 35
+          },
+          {
+            "soundex_num": "S530_15",
+            "count": 35
+          },
+          {
+            "soundex_num": "E200_1",
+            "count": 35
+          },
+          {
+            "soundex_num": "T200_4",
+            "count": 35
+          },
+          {
+            "soundex_num": "R300_1",
+            "count": 35
+          },
+          {
+            "soundex_num": "C600_2",
+            "count": 35
+          },
+          {
+            "soundex_num": "E230_3",
+            "count": 35
+          },
+          {
+            "soundex_num": "S500_14",
+            "count": 35
+          },
+          {
+            "soundex_num": "A300_3",
+            "count": 35
+          },
+          {
+            "soundex_num": "R200_3",
+            "count": 35
+          },
+          {
+            "soundex_num": "S600_40",
+            "count": 35
+          },
+          {
+            "soundex_num": "V200_1",
+            "count": 34
+          },
+          {
+            "soundex_num": "R400_3",
+            "count": 34
+          },
+          {
+            "soundex_num": "C500_1",
+            "count": 34
+          },
+          {
+            "soundex_num": "A300_1",
+            "count": 34
+          },
+          {
+            "soundex_num": "J000_4",
+            "count": 33
+          },
+          {
+            "soundex_num": "S500_6",
+            "count": 33
+          }
+        ],
+        "blocks_gt_100": 10,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 305
+      },
+      "translit_cname": {
+        "total_unique_keys": 408795,
+        "top_10_largest_blocks": [
+          {
+            "translit_cname": "urgentcare",
+            "count": 133
+          },
+          {
+            "translit_cname": "physicaltherapy",
+            "count": 114
+          },
+          {
+            "translit_cname": "internalmedicine",
+            "count": 114
+          },
+          {
+            "translit_cname": "womenshealth",
+            "count": 109
+          },
+          {
+            "translit_cname": "behavioralhealth",
+            "count": 109
+          },
+          {
+            "translit_cname": "primarycare",
+            "count": 108
+          },
+          {
+            "translit_cname": "pediatricdental",
+            "count": 107
+          },
+          {
+            "translit_cname": "vision",
+            "count": 107
+          },
+          {
+            "translit_cname": "shree",
+            "count": 105
+          },
+          {
+            "translit_cname": "pediatricdentistry",
+            "count": 104
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "translit_cname": "urgentcare",
+            "count": 133
+          },
+          {
+            "translit_cname": "physicaltherapy",
+            "count": 114
+          },
+          {
+            "translit_cname": "internalmedicine",
+            "count": 114
+          },
+          {
+            "translit_cname": "womenshealth",
+            "count": 109
+          },
+          {
+            "translit_cname": "behavioralhealth",
+            "count": 109
+          },
+          {
+            "translit_cname": "primarycare",
+            "count": 108
+          },
+          {
+            "translit_cname": "pediatricdental",
+            "count": 107
+          },
+          {
+            "translit_cname": "vision",
+            "count": 107
+          },
+          {
+            "translit_cname": "shree",
+            "count": 105
+          },
+          {
+            "translit_cname": "pediatricdentistry",
+            "count": 104
+          },
+          {
+            "translit_cname": "mumbai",
+            "count": 96
+          },
+          {
+            "translit_cname": "newdelhi",
+            "count": 95
+          },
+          {
+            "translit_cname": "meridian",
+            "count": 92
+          },
+          {
+            "translit_cname": "apex",
+            "count": 85
+          },
+          {
+            "translit_cname": "pediatric",
+            "count": 80
+          },
+          {
+            "translit_cname": "earnosethroat",
+            "count": 79
+          },
+          {
+            "translit_cname": "surgicalcare",
+            "count": 77
+          },
+          {
+            "translit_cname": "cardiologycare",
+            "count": 77
+          },
+          {
+            "translit_cname": "chiropractic",
+            "count": 76
+          },
+          {
+            "translit_cname": "dental",
+            "count": 75
+          },
+          {
+            "translit_cname": "premier",
+            "count": 74
+          },
+          {
+            "translit_cname": "footankle",
+            "count": 74
+          },
+          {
+            "translit_cname": "dermatologycare",
+            "count": 71
+          },
+          {
+            "translit_cname": "orthopedic",
+            "count": 70
+          },
+          {
+            "translit_cname": "summit",
+            "count": 70
+          },
+          {
+            "translit_cname": "eye",
+            "count": 69
+          },
+          {
+            "translit_cname": "familycenter",
+            "count": 69
+          },
+          {
+            "translit_cname": "pediatricdentalcare",
+            "count": 69
+          },
+          {
+            "translit_cname": "cardiology",
+            "count": 66
+          },
+          {
+            "translit_cname": "family",
+            "count": 64
+          },
+          {
+            "translit_cname": "chiropracticcare",
+            "count": 62
+          },
+          {
+            "translit_cname": "golden",
+            "count": 62
+          },
+          {
+            "translit_cname": "visioncare",
+            "count": 62
+          },
+          {
+            "translit_cname": "green",
+            "count": 62
+          },
+          {
+            "translit_cname": "sai",
+            "count": 62
+          },
+          {
+            "translit_cname": "cascade",
+            "count": 61
+          },
+          {
+            "translit_cname": "great",
+            "count": 61
+          },
+          {
+            "translit_cname": "oncology",
+            "count": 61
+          },
+          {
+            "translit_cname": "dermatology",
+            "count": 60
+          },
+          {
+            "translit_cname": "visioncenter",
+            "count": 60
+          },
+          {
+            "translit_cname": "surgical",
+            "count": 60
+          },
+          {
+            "translit_cname": "united",
+            "count": 60
+          },
+          {
+            "translit_cname": "eyecare",
+            "count": 59
+          },
+          {
+            "translit_cname": "urologycare",
+            "count": 59
+          },
+          {
+            "translit_cname": "first",
+            "count": 59
+          },
+          {
+            "translit_cname": "anchor",
+            "count": 58
+          },
+          {
+            "translit_cname": "kolkata",
+            "count": 58
+          },
+          {
+            "translit_cname": "orthopediccare",
+            "count": 58
+          },
+          {
+            "translit_cname": "urology",
+            "count": 58
+          },
+          {
+            "translit_cname": "pediatricdentistrycare",
+            "count": 58
+          },
+          {
+            "translit_cname": "tech",
+            "count": 57
+          },
+          {
+            "translit_cname": "delhi",
+            "count": 57
+          },
+          {
+            "translit_cname": "white",
+            "count": 57
+          },
+          {
+            "translit_cname": "familycare",
+            "count": 57
+          },
+          {
+            "translit_cname": "dentalcare",
+            "count": 57
+          },
+          {
+            "translit_cname": "internalmedicinecare",
+            "count": 57
+          },
+          {
+            "translit_cname": "blue",
+            "count": 57
+          },
+          {
+            "translit_cname": "southern",
+            "count": 56
+          },
+          {
+            "translit_cname": "oncologycare",
+            "count": 56
+          },
+          {
+            "translit_cname": "south",
+            "count": 55
+          },
+          {
+            "translit_cname": "prime",
+            "count": 54
+          },
+          {
+            "translit_cname": "classic",
+            "count": 54
+          },
+          {
+            "translit_cname": "cinder",
+            "count": 54
+          },
+          {
+            "translit_cname": "helios",
+            "count": 52
+          },
+          {
+            "translit_cname": "bharat",
+            "count": 52
+          },
+          {
+            "translit_cname": "om",
+            "count": 52
+          },
+          {
+            "translit_cname": "sapphire",
+            "count": 52
+          },
+          {
+            "translit_cname": "horizon",
+            "count": 51
+          },
+          {
+            "translit_cname": "raj",
+            "count": 50
+          },
+          {
+            "translit_cname": "balaji",
+            "count": 50
+          },
+          {
+            "translit_cname": "north",
+            "count": 50
+          },
+          {
+            "translit_cname": "maa",
+            "count": 50
+          },
+          {
+            "translit_cname": "supreme",
+            "count": 50
+          },
+          {
+            "translit_cname": "digital",
+            "count": 49
+          },
+          {
+            "translit_cname": "ironclad",
+            "count": 49
+          },
+          {
+            "translit_cname": "citadel",
+            "count": 49
+          },
+          {
+            "translit_cname": "pune",
+            "count": 49
+          },
+          {
+            "translit_cname": "northwind",
+            "count": 48
+          },
+          {
+            "translit_cname": "east",
+            "count": 48
+          },
+          {
+            "translit_cname": "al",
+            "count": 48
+          },
+          {
+            "translit_cname": "urgentcarepartners",
+            "count": 48
+          },
+          {
+            "translit_cname": "birch",
+            "count": 48
+          },
+          {
+            "translit_cname": "sun",
+            "count": 48
+          },
+          {
+            "translit_cname": "smart",
+            "count": 48
+          },
+          {
+            "translit_cname": "star",
+            "count": 48
+          },
+          {
+            "translit_cname": "bombay",
+            "count": 48
+          },
+          {
+            "translit_cname": "granite",
+            "count": 48
+          },
+          {
+            "translit_cname": "footanklecare",
+            "count": 48
+          },
+          {
+            "translit_cname": "pediatriccenter",
+            "count": 48
+          },
+          {
+            "translit_cname": "vanguard",
+            "count": 48
+          },
+          {
+            "translit_cname": "silver",
+            "count": 47
+          },
+          {
+            "translit_cname": "eastern",
+            "count": 47
+          },
+          {
+            "translit_cname": "high",
+            "count": 47
+          },
+          {
+            "translit_cname": "slate",
+            "count": 47
+          },
+          {
+            "translit_cname": "all",
+            "count": 47
+          },
+          {
+            "translit_cname": "shyam",
+            "count": 47
+          },
+          {
+            "translit_cname": "dynamic",
+            "count": 47
+          },
+          {
+            "translit_cname": "anand",
+            "count": 47
+          },
+          {
+            "translit_cname": "behavioralhealthcare",
+            "count": 47
+          },
+          {
+            "translit_cname": "ember",
+            "count": 47
+          }
+        ],
+        "blocks_gt_100": 10,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 133
+      }
+    }
+  },
+  "test_blocking_profile": {
+    "method_profiles": [
+      {
+        "method": "exact_compact_name",
+        "runtime_s": 0.045770883560180664,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 6914,
+        "unique_candidates": 6914,
+        "avg_candidates_per_s1": 2.7656
+      },
+      {
+        "method": "exact_normalized_name",
+        "runtime_s": 0.045926570892333984,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 814,
+        "unique_candidates": 814,
+        "avg_candidates_per_s1": 0.3256
+      },
+      {
+        "method": "cname8_addr_num",
+        "runtime_s": 0.03540372848510742,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 1400,
+        "unique_candidates": 1400,
+        "avg_candidates_per_s1": 0.56
+      },
+      {
+        "method": "f2_words_addr_num",
+        "runtime_s": 0.03806328773498535,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 517,
+        "unique_candidates": 517,
+        "avg_candidates_per_s1": 0.2068
+      },
+      {
+        "method": "method_a_postal_cname",
+        "runtime_s": 0.006851673126220703,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 4,
+        "unique_candidates": 4,
+        "avg_candidates_per_s1": 0.0016
+      },
+      {
+        "method": "method_d_phonetic_soundex",
+        "runtime_s": 0.03341960906982422,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 9428,
+        "unique_candidates": 9428,
+        "avg_candidates_per_s1": 3.7712
+      },
+      {
+        "method": "method_e_transliteration",
+        "runtime_s": 0.04194188117980957,
+        "peak_ram_mb": 0.0,
+        "total_candidates": 6870,
+        "unique_candidates": 6870,
+        "avg_candidates_per_s1": 2.748
+      }
+    ],
+    "total_raw_candidates": 25947,
+    "total_unique_candidates": 16655,
+    "duplicate_candidates": 9292,
+    "candidate_stats": {
+      "mean": 6.662,
+      "median": 1.0,
+      "p90": 19.0,
+      "p95": 35.0,
+      "p99": 71.00999999999976,
+      "max": 322
+    },
+    "candidate_buckets": {
+      "0": 1005,
+      "1-5": 932,
+      "6-10": 182,
+      "11-25": 207,
+      "26-50": 115,
+      "51-100": 46,
+      "101-500": 13,
+      "501-1000": 0,
+      "1001-5000": 0,
+      "5000+": 0
+    },
+    "block_size_stats": {
+      "compact_name": {
+        "total_unique_keys": 431638,
+        "top_10_largest_blocks": [
+          {
+            "compact_name": "newdelhi",
+            "count": 125
+          },
+          {
+            "compact_name": "shree",
+            "count": 109
+          },
+          {
+            "compact_name": "mumbai",
+            "count": 102
+          },
+          {
+            "compact_name": "behavioralhealth",
+            "count": 77
+          },
+          {
+            "compact_name": "primarycare",
+            "count": 72
+          },
+          {
+            "compact_name": "new",
+            "count": 69
+          },
+          {
+            "compact_name": "kolkata",
+            "count": 69
+          },
+          {
+            "compact_name": "internalmedicine",
+            "count": 69
+          },
+          {
+            "compact_name": "apex",
+            "count": 67
+          },
+          {
+            "compact_name": "urgentcare",
+            "count": 65
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "compact_name": "newdelhi",
+            "count": 125
+          },
+          {
+            "compact_name": "shree",
+            "count": 109
+          },
+          {
+            "compact_name": "mumbai",
+            "count": 102
+          },
+          {
+            "compact_name": "behavioralhealth",
+            "count": 77
+          },
+          {
+            "compact_name": "primarycare",
+            "count": 72
+          },
+          {
+            "compact_name": "new",
+            "count": 69
+          },
+          {
+            "compact_name": "kolkata",
+            "count": 69
+          },
+          {
+            "compact_name": "internalmedicine",
+            "count": 69
+          },
+          {
+            "compact_name": "apex",
+            "count": 67
+          },
+          {
+            "compact_name": "urgentcare",
+            "count": 65
+          },
+          {
+            "compact_name": "vision",
+            "count": 65
+          },
+          {
+            "compact_name": "united",
+            "count": 64
+          },
+          {
+            "compact_name": "pediatricdental",
+            "count": 63
+          },
+          {
+            "compact_name": "all",
+            "count": 60
+          },
+          {
+            "compact_name": "blue",
+            "count": 59
+          },
+          {
+            "compact_name": "green",
+            "count": 59
+          },
+          {
+            "compact_name": "family",
+            "count": 58
+          },
+          {
+            "compact_name": "jai",
+            "count": 58
+          },
+          {
+            "compact_name": "tech",
+            "count": 56
+          },
+          {
+            "compact_name": "krishna",
+            "count": 55
+          },
+          {
+            "compact_name": "pediatricdentistry",
+            "count": 55
+          },
+          {
+            "compact_name": "hari",
+            "count": 55
+          },
+          {
+            "compact_name": "bordeauxclub",
+            "count": 55
+          },
+          {
+            "compact_name": "golden",
+            "count": 54
+          },
+          {
+            "compact_name": "sree",
+            "count": 54
+          },
+          {
+            "compact_name": "om",
+            "count": 53
+          },
+          {
+            "compact_name": "physicaltherapy",
+            "count": 52
+          },
+          {
+            "compact_name": "womenshealth",
+            "count": 51
+          },
+          {
+            "compact_name": "ram",
+            "count": 51
+          },
+          {
+            "compact_name": "laxmi",
+            "count": 51
+          },
+          {
+            "compact_name": "delhi",
+            "count": 51
+          },
+          {
+            "compact_name": "prime",
+            "count": 51
+          },
+          {
+            "compact_name": "earnosethroat",
+            "count": 50
+          },
+          {
+            "compact_name": "pediatric",
+            "count": 50
+          },
+          {
+            "compact_name": "white",
+            "count": 50
+          },
+          {
+            "compact_name": "bangalore",
+            "count": 49
+          },
+          {
+            "compact_name": "star",
+            "count": 49
+          },
+          {
+            "compact_name": "sai",
+            "count": 48
+          },
+          {
+            "compact_name": "bombay",
+            "count": 48
+          },
+          {
+            "compact_name": "lilleclub",
+            "count": 48
+          },
+          {
+            "compact_name": "silver",
+            "count": 47
+          },
+          {
+            "compact_name": "shakti",
+            "count": 47
+          },
+          {
+            "compact_name": "unique",
+            "count": 47
+          },
+          {
+            "compact_name": "first",
+            "count": 47
+          },
+          {
+            "compact_name": "south",
+            "count": 47
+          },
+          {
+            "compact_name": "chiropractic",
+            "count": 47
+          },
+          {
+            "compact_name": "hyderabad",
+            "count": 47
+          },
+          {
+            "compact_name": "east",
+            "count": 46
+          },
+          {
+            "compact_name": "royal",
+            "count": 46
+          },
+          {
+            "compact_name": "hotel",
+            "count": 46
+          },
+          {
+            "compact_name": "balaji",
+            "count": 46
+          },
+          {
+            "compact_name": "tirupati",
+            "count": 46
+          },
+          {
+            "compact_name": "smart",
+            "count": 45
+          },
+          {
+            "compact_name": "footankle",
+            "count": 45
+          },
+          {
+            "compact_name": "dream",
+            "count": 45
+          },
+          {
+            "compact_name": "maa",
+            "count": 45
+          },
+          {
+            "compact_name": "classic",
+            "count": 45
+          },
+          {
+            "compact_name": "dynamic",
+            "count": 45
+          },
+          {
+            "compact_name": "cardiology",
+            "count": 45
+          },
+          {
+            "compact_name": "best",
+            "count": 44
+          },
+          {
+            "compact_name": "surya",
+            "count": 44
+          },
+          {
+            "compact_name": "north",
+            "count": 44
+          },
+          {
+            "compact_name": "footanklecare",
+            "count": 44
+          },
+          {
+            "compact_name": "shiv",
+            "count": 43
+          },
+          {
+            "compact_name": "cc",
+            "count": 43
+          },
+          {
+            "compact_name": "gujarat",
+            "count": 43
+          },
+          {
+            "compact_name": "sky",
+            "count": 43
+          },
+          {
+            "compact_name": "great",
+            "count": 43
+          },
+          {
+            "compact_name": "supreme",
+            "count": 43
+          },
+          {
+            "compact_name": "titan",
+            "count": 43
+          },
+          {
+            "compact_name": "vijay",
+            "count": 42
+          },
+          {
+            "compact_name": "ace",
+            "count": 42
+          },
+          {
+            "compact_name": "summit",
+            "count": 42
+          },
+          {
+            "compact_name": "aditya",
+            "count": 42
+          },
+          {
+            "compact_name": "jain",
+            "count": 42
+          },
+          {
+            "compact_name": "raj",
+            "count": 42
+          },
+          {
+            "compact_name": "digital",
+            "count": 41
+          },
+          {
+            "compact_name": "creative",
+            "count": 41
+          },
+          {
+            "compact_name": "lakshmi",
+            "count": 41
+          },
+          {
+            "compact_name": "orthopedic",
+            "count": 41
+          },
+          {
+            "compact_name": "urology",
+            "count": 41
+          },
+          {
+            "compact_name": "hitech",
+            "count": 41
+          },
+          {
+            "compact_name": "urban",
+            "count": 41
+          },
+          {
+            "compact_name": "ss",
+            "count": 41
+          },
+          {
+            "compact_name": "jay",
+            "count": 41
+          },
+          {
+            "compact_name": "orthopediccare",
+            "count": 41
+          },
+          {
+            "compact_name": "baba",
+            "count": 41
+          },
+          {
+            "compact_name": "indo",
+            "count": 40
+          },
+          {
+            "compact_name": "meridian",
+            "count": 40
+          },
+          {
+            "compact_name": "dermatologycare",
+            "count": 40
+          },
+          {
+            "compact_name": "nantesclub",
+            "count": 40
+          },
+          {
+            "compact_name": "premier",
+            "count": 40
+          },
+          {
+            "compact_name": "swastik",
+            "count": 40
+          },
+          {
+            "compact_name": "oncology",
+            "count": 40
+          },
+          {
+            "compact_name": "pune",
+            "count": 39
+          },
+          {
+            "compact_name": "bright",
+            "count": 39
+          },
+          {
+            "compact_name": "eyecare",
+            "count": 39
+          },
+          {
+            "compact_name": "shiva",
+            "count": 39
+          },
+          {
+            "compact_name": "chiropracticcare",
+            "count": 38
+          },
+          {
+            "compact_name": "indian",
+            "count": 38
+          }
+        ],
+        "blocks_gt_100": 3,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 125
+      },
+      "norm_name": {
+        "total_unique_keys": 472503,
+        "top_10_largest_blocks": [
+          {
+            "norm_name": "cc",
+            "count": 42
+          },
+          {
+            "norm_name": "urgent care",
+            "count": 31
+          },
+          {
+            "norm_name": "pc",
+            "count": 31
+          },
+          {
+            "norm_name": "lc",
+            "count": 29
+          },
+          {
+            "norm_name": "behavioral health",
+            "count": 28
+          },
+          {
+            "norm_name": "internal medicine",
+            "count": 28
+          },
+          {
+            "norm_name": "primary care",
+            "count": 28
+          },
+          {
+            "norm_name": "womens health",
+            "count": 27
+          },
+          {
+            "norm_name": "ac",
+            "count": 26
+          },
+          {
+            "norm_name": "sc",
+            "count": 24
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "norm_name": "cc",
+            "count": 42
+          },
+          {
+            "norm_name": "urgent care",
+            "count": 31
+          },
+          {
+            "norm_name": "pc",
+            "count": 31
+          },
+          {
+            "norm_name": "lc",
+            "count": 29
+          },
+          {
+            "norm_name": "behavioral health",
+            "count": 28
+          },
+          {
+            "norm_name": "internal medicine",
+            "count": 28
+          },
+          {
+            "norm_name": "primary care",
+            "count": 28
+          },
+          {
+            "norm_name": "womens health",
+            "count": 27
+          },
+          {
+            "norm_name": "ac",
+            "count": 26
+          },
+          {
+            "norm_name": "sc",
+            "count": 24
+          },
+          {
+            "norm_name": "lille club",
+            "count": 23
+          },
+          {
+            "norm_name": "pediatric dentistry",
+            "count": 23
+          },
+          {
+            "norm_name": "nantes club",
+            "count": 23
+          },
+          {
+            "norm_name": "maisondesant com",
+            "count": 23
+          },
+          {
+            "norm_name": "dc",
+            "count": 23
+          },
+          {
+            "norm_name": "foot ankle",
+            "count": 22
+          },
+          {
+            "norm_name": "physical therapy",
+            "count": 22
+          },
+          {
+            "norm_name": "ear nose throat",
+            "count": 21
+          },
+          {
+            "norm_name": "pediatric dental",
+            "count": 21
+          },
+          {
+            "norm_name": "bordeaux club sarl",
+            "count": 20
+          },
+          {
+            "norm_name": "tc",
+            "count": 20
+          },
+          {
+            "norm_name": "back alley",
+            "count": 20
+          },
+          {
+            "norm_name": "ec",
+            "count": 20
+          },
+          {
+            "norm_name": "rc",
+            "count": 20
+          },
+          {
+            "norm_name": "cs",
+            "count": 19
+          },
+          {
+            "norm_name": "bc",
+            "count": 19
+          },
+          {
+            "norm_name": "mc",
+            "count": 18
+          },
+          {
+            "norm_name": "ca",
+            "count": 18
+          },
+          {
+            "norm_name": "earnosethroat com",
+            "count": 18
+          },
+          {
+            "norm_name": "cf",
+            "count": 18
+          },
+          {
+            "norm_name": "bordeaux club",
+            "count": 18
+          },
+          {
+            "norm_name": "af",
+            "count": 17
+          },
+          {
+            "norm_name": "lille club sas",
+            "count": 16
+          },
+          {
+            "norm_name": "ce",
+            "count": 16
+          },
+          {
+            "norm_name": "the dent",
+            "count": 16
+          },
+          {
+            "norm_name": "bordeaux sportive",
+            "count": 16
+          },
+          {
+            "norm_name": "fc",
+            "count": 16
+          },
+          {
+            "norm_name": "animal welfare",
+            "count": 15
+          },
+          {
+            "norm_name": "division of",
+            "count": 15
+          },
+          {
+            "norm_name": "lille comite",
+            "count": 15
+          },
+          {
+            "norm_name": "aa",
+            "count": 15
+          },
+          {
+            "norm_name": "lille club sarl",
+            "count": 15
+          },
+          {
+            "norm_name": "lille ecole",
+            "count": 15
+          },
+          {
+            "norm_name": "as",
+            "count": 15
+          },
+          {
+            "norm_name": "department of",
+            "count": 15
+          },
+          {
+            "norm_name": "oncology group",
+            "count": 14
+          },
+          {
+            "norm_name": "bordeaux primaire",
+            "count": 14
+          },
+          {
+            "norm_name": "board of",
+            "count": 14
+          },
+          {
+            "norm_name": "shree",
+            "count": 14
+          },
+          {
+            "norm_name": "cm",
+            "count": 14
+          },
+          {
+            "norm_name": "la",
+            "count": 13
+          },
+          {
+            "norm_name": "new delhi",
+            "count": 13
+          },
+          {
+            "norm_name": "main street",
+            "count": 13
+          },
+          {
+            "norm_name": "si",
+            "count": 13
+          },
+          {
+            "norm_name": "bordeaux amis",
+            "count": 13
+          },
+          {
+            "norm_name": "vc",
+            "count": 13
+          },
+          {
+            "norm_name": "bordeaux amicale",
+            "count": 13
+          },
+          {
+            "norm_name": "pediatric",
+            "count": 12
+          },
+          {
+            "norm_name": "family center",
+            "count": 12
+          },
+          {
+            "norm_name": "tourcoing club sas",
+            "count": 12
+          },
+          {
+            "norm_name": "vision physicians",
+            "count": 12
+          },
+          {
+            "norm_name": "tourcoing club",
+            "count": 12
+          },
+          {
+            "norm_name": "ma",
+            "count": 12
+          },
+          {
+            "norm_name": "bordeaux ecole",
+            "count": 12
+          },
+          {
+            "norm_name": "nantes club sarl",
+            "count": 12
+          },
+          {
+            "norm_name": "eye partners",
+            "count": 12
+          },
+          {
+            "norm_name": "straight edge",
+            "count": 11
+          },
+          {
+            "norm_name": "apex",
+            "count": 11
+          },
+          {
+            "norm_name": "raven llc",
+            "count": 11
+          },
+          {
+            "norm_name": "pediatric associates",
+            "count": 11
+          },
+          {
+            "norm_name": "bordeaux societe",
+            "count": 11
+          },
+          {
+            "norm_name": "surgical specialists",
+            "count": 11
+          },
+          {
+            "norm_name": "pediatric physicians",
+            "count": 11
+          },
+          {
+            "norm_name": "lille sportive",
+            "count": 11
+          },
+          {
+            "norm_name": "lf",
+            "count": 11
+          },
+          {
+            "norm_name": "newdelhi",
+            "count": 11
+          },
+          {
+            "norm_name": "dental partners",
+            "count": 11
+          },
+          {
+            "norm_name": "autism assistance",
+            "count": 11
+          },
+          {
+            "norm_name": "ps",
+            "count": 11
+          },
+          {
+            "norm_name": "titan llc",
+            "count": 11
+          },
+          {
+            "norm_name": "da",
+            "count": 11
+          },
+          {
+            "norm_name": "pessac club",
+            "count": 11
+          },
+          {
+            "norm_name": "human rights",
+            "count": 11
+          },
+          {
+            "norm_name": "office of",
+            "count": 11
+          },
+          {
+            "norm_name": "cl",
+            "count": 11
+          },
+          {
+            "norm_name": "foot",
+            "count": 11
+          },
+          {
+            "norm_name": "nantes club sas",
+            "count": 11
+          },
+          {
+            "norm_name": "la teste de buch",
+            "count": 10
+          },
+          {
+            "norm_name": "nantes sportive",
+            "count": 10
+          },
+          {
+            "norm_name": "pediatric specialists",
+            "count": 10
+          },
+          {
+            "norm_name": "bordeaux club sas",
+            "count": 10
+          },
+          {
+            "norm_name": "oncology care",
+            "count": 10
+          },
+          {
+            "norm_name": "pf",
+            "count": 10
+          },
+          {
+            "norm_name": "\u091c\u092f \u091f\u094d\u0930\u0947\u0921\u093f\u0902\u0917 \u092a\u094d\u0930\u093e\u0907\u0935\u0947\u091f \u0932\u093f\u092e\u093f\u091f\u0947\u0921",
+            "count": 10
+          },
+          {
+            "norm_name": "sg",
+            "count": 10
+          },
+          {
+            "norm_name": "sf",
+            "count": 10
+          },
+          {
+            "norm_name": "lp",
+            "count": 10
+          },
+          {
+            "norm_name": "re",
+            "count": 10
+          },
+          {
+            "norm_name": "st",
+            "count": 10
+          },
+          {
+            "norm_name": "helios",
+            "count": 10
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 42
+      },
+      "cname8_num": {
+        "total_unique_keys": 424382,
+        "top_10_largest_blocks": [
+          {
+            "cname8_num": "newdelhi_1",
+            "count": 47
+          },
+          {
+            "cname8_num": "newdelhi_3",
+            "count": 38
+          },
+          {
+            "cname8_num": "hyderaba_8",
+            "count": 35
+          },
+          {
+            "cname8_num": "bordeaux_11",
+            "count": 33
+          },
+          {
+            "cname8_num": "hyderaba_1",
+            "count": 31
+          },
+          {
+            "cname8_num": "\u00e9tabliss_12",
+            "count": 30
+          },
+          {
+            "cname8_num": "\u00e9tabliss_8",
+            "count": 30
+          },
+          {
+            "cname8_num": "\u00e9tabliss_2",
+            "count": 30
+          },
+          {
+            "cname8_num": "\u00e9tabliss_5",
+            "count": 30
+          },
+          {
+            "cname8_num": "hyderaba_2",
+            "count": 29
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "cname8_num": "newdelhi_1",
+            "count": 47
+          },
+          {
+            "cname8_num": "newdelhi_3",
+            "count": 38
+          },
+          {
+            "cname8_num": "hyderaba_8",
+            "count": 35
+          },
+          {
+            "cname8_num": "bordeaux_11",
+            "count": 33
+          },
+          {
+            "cname8_num": "hyderaba_1",
+            "count": 31
+          },
+          {
+            "cname8_num": "\u00e9tabliss_12",
+            "count": 30
+          },
+          {
+            "cname8_num": "\u00e9tabliss_8",
+            "count": 30
+          },
+          {
+            "cname8_num": "\u00e9tabliss_2",
+            "count": 30
+          },
+          {
+            "cname8_num": "\u00e9tabliss_5",
+            "count": 30
+          },
+          {
+            "cname8_num": "hyderaba_2",
+            "count": 29
+          },
+          {
+            "cname8_num": "bordeaux_1",
+            "count": 29
+          },
+          {
+            "cname8_num": "\u00e9tabliss_4",
+            "count": 29
+          },
+          {
+            "cname8_num": "\u00e9tabliss_19",
+            "count": 29
+          },
+          {
+            "cname8_num": "newdelhi_2",
+            "count": 28
+          },
+          {
+            "cname8_num": "bordeaux_16",
+            "count": 28
+          },
+          {
+            "cname8_num": "associat_15",
+            "count": 28
+          },
+          {
+            "cname8_num": "\u00e9tabliss_16",
+            "count": 27
+          },
+          {
+            "cname8_num": "\u00e9tabliss_7",
+            "count": 27
+          },
+          {
+            "cname8_num": "bordeaux_10",
+            "count": 26
+          },
+          {
+            "cname8_num": "hyderaba_6",
+            "count": 26
+          },
+          {
+            "cname8_num": "associat_14",
+            "count": 26
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_5",
+            "count": 25
+          },
+          {
+            "cname8_num": "\u00e9tabliss_9",
+            "count": 25
+          },
+          {
+            "cname8_num": "\u00e9tabliss_24",
+            "count": 25
+          },
+          {
+            "cname8_num": "associat_16",
+            "count": 25
+          },
+          {
+            "cname8_num": "associat_7",
+            "count": 25
+          },
+          {
+            "cname8_num": "associat_8",
+            "count": 24
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_1",
+            "count": 24
+          },
+          {
+            "cname8_num": "associat_5",
+            "count": 24
+          },
+          {
+            "cname8_num": "associat_6",
+            "count": 23
+          },
+          {
+            "cname8_num": "\u00e9tabliss_6",
+            "count": 23
+          },
+          {
+            "cname8_num": "amicaled_17",
+            "count": 23
+          },
+          {
+            "cname8_num": "associat_2",
+            "count": 23
+          },
+          {
+            "cname8_num": "\u00e9tabliss_10",
+            "count": 23
+          },
+          {
+            "cname8_num": "associat_3",
+            "count": 22
+          },
+          {
+            "cname8_num": "amicaled_6",
+            "count": 22
+          },
+          {
+            "cname8_num": "bordeaux_25",
+            "count": 22
+          },
+          {
+            "cname8_num": "newdelhi_4",
+            "count": 22
+          },
+          {
+            "cname8_num": "\u00e9tabliss_14",
+            "count": 22
+          },
+          {
+            "cname8_num": "bordeaux_18",
+            "count": 22
+          },
+          {
+            "cname8_num": "\u00e9tabliss_27",
+            "count": 22
+          },
+          {
+            "cname8_num": "bordeaux_4",
+            "count": 21
+          },
+          {
+            "cname8_num": "bordeaux_29",
+            "count": 21
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_21",
+            "count": 21
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_8",
+            "count": 21
+          },
+          {
+            "cname8_num": "bordeaux_34",
+            "count": 21
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_4",
+            "count": 21
+          },
+          {
+            "cname8_num": "bordeaux_2",
+            "count": 20
+          },
+          {
+            "cname8_num": "bordeaux_5",
+            "count": 20
+          },
+          {
+            "cname8_num": "bangalor_6",
+            "count": 20
+          },
+          {
+            "cname8_num": "southern_1",
+            "count": 20
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_9",
+            "count": 20
+          },
+          {
+            "cname8_num": "\u00e9tabliss_11",
+            "count": 20
+          },
+          {
+            "cname8_num": "bangalor_3",
+            "count": 20
+          },
+          {
+            "cname8_num": "associat_13",
+            "count": 20
+          },
+          {
+            "cname8_num": "universa_3",
+            "count": 20
+          },
+          {
+            "cname8_num": "bordeaux_20",
+            "count": 19
+          },
+          {
+            "cname8_num": "associat_9",
+            "count": 19
+          },
+          {
+            "cname8_num": "\u00e9tabliss_17",
+            "count": 19
+          },
+          {
+            "cname8_num": "\u00e9tabliss_22",
+            "count": 19
+          },
+          {
+            "cname8_num": "\u00e9tabliss_15",
+            "count": 19
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_13",
+            "count": 19
+          },
+          {
+            "cname8_num": "amicaled_16",
+            "count": 19
+          },
+          {
+            "cname8_num": "bordeaux_28",
+            "count": 19
+          },
+          {
+            "cname8_num": "bordeaux_12",
+            "count": 19
+          },
+          {
+            "cname8_num": "hyderaba_3",
+            "count": 19
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_14",
+            "count": 19
+          },
+          {
+            "cname8_num": "comit\u00e9de_8",
+            "count": 19
+          },
+          {
+            "cname8_num": "bordeaux_27",
+            "count": 19
+          },
+          {
+            "cname8_num": "bordeaux_30",
+            "count": 19
+          },
+          {
+            "cname8_num": "tirupati_1",
+            "count": 19
+          },
+          {
+            "cname8_num": "associat_1",
+            "count": 18
+          },
+          {
+            "cname8_num": "\u00e9tabliss_13",
+            "count": 18
+          },
+          {
+            "cname8_num": "centreho_2",
+            "count": 18
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_11",
+            "count": 18
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_2",
+            "count": 18
+          },
+          {
+            "cname8_num": "newdelhi_8",
+            "count": 18
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_7",
+            "count": 18
+          },
+          {
+            "cname8_num": "bordeaux_9",
+            "count": 18
+          },
+          {
+            "cname8_num": "associat_10",
+            "count": 18
+          },
+          {
+            "cname8_num": "amicaled_12",
+            "count": 18
+          },
+          {
+            "cname8_num": "associat_12",
+            "count": 18
+          },
+          {
+            "cname8_num": "innovati_3",
+            "count": 18
+          },
+          {
+            "cname8_num": "amicaled_10",
+            "count": 18
+          },
+          {
+            "cname8_num": "\u00e9tabliss_3",
+            "count": 18
+          },
+          {
+            "cname8_num": "bordeaux_7",
+            "count": 18
+          },
+          {
+            "cname8_num": "newdelhi_10",
+            "count": 18
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_15",
+            "count": 18
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_20",
+            "count": 17
+          },
+          {
+            "cname8_num": "bordeaux_26",
+            "count": 17
+          },
+          {
+            "cname8_num": "institut_8",
+            "count": 17
+          },
+          {
+            "cname8_num": "develope_1",
+            "count": 17
+          },
+          {
+            "cname8_num": "\u00e9tabliss_28",
+            "count": 17
+          },
+          {
+            "cname8_num": "bordeaux_17",
+            "count": 17
+          },
+          {
+            "cname8_num": "bordeaux_6",
+            "count": 17
+          },
+          {
+            "cname8_num": "maisonde_9",
+            "count": 17
+          },
+          {
+            "cname8_num": "associat_19",
+            "count": 17
+          },
+          {
+            "cname8_num": "\u00e9tabliss_21",
+            "count": 17
+          },
+          {
+            "cname8_num": "f\u00e9d\u00e9rati_3",
+            "count": 17
+          },
+          {
+            "cname8_num": "associat_11",
+            "count": 17
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 47
+      },
+      "f2_num": {
+        "total_unique_keys": 439472,
+        "top_10_largest_blocks": [
+          {
+            "f2_num": "new_delhi_1",
+            "count": 41
+          },
+          {
+            "f2_num": "new_delhi_3",
+            "count": 32
+          },
+          {
+            "f2_num": "new_delhi_2",
+            "count": 23
+          },
+          {
+            "f2_num": "new_delhi_4",
+            "count": 21
+          },
+          {
+            "f2_num": "maison_de_9",
+            "count": 17
+          },
+          {
+            "f2_num": "new_delhi_8",
+            "count": 17
+          },
+          {
+            "f2_num": "new_delhi_10",
+            "count": 16
+          },
+          {
+            "f2_num": "centre_hospitalier_2",
+            "count": 16
+          },
+          {
+            "f2_num": "new_delhi_16",
+            "count": 14
+          },
+          {
+            "f2_num": "saint_nazaire_12",
+            "count": 14
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "f2_num": "new_delhi_1",
+            "count": 41
+          },
+          {
+            "f2_num": "new_delhi_3",
+            "count": 32
+          },
+          {
+            "f2_num": "new_delhi_2",
+            "count": 23
+          },
+          {
+            "f2_num": "new_delhi_4",
+            "count": 21
+          },
+          {
+            "f2_num": "maison_de_9",
+            "count": 17
+          },
+          {
+            "f2_num": "new_delhi_8",
+            "count": 17
+          },
+          {
+            "f2_num": "new_delhi_10",
+            "count": 16
+          },
+          {
+            "f2_num": "centre_hospitalier_2",
+            "count": 16
+          },
+          {
+            "f2_num": "new_delhi_16",
+            "count": 14
+          },
+          {
+            "f2_num": "saint_nazaire_12",
+            "count": 14
+          },
+          {
+            "f2_num": "centre_hospitalier_23",
+            "count": 13
+          },
+          {
+            "f2_num": "new_delhi_6",
+            "count": 13
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_9",
+            "count": 13
+          },
+          {
+            "f2_num": "club_de_1",
+            "count": 12
+          },
+          {
+            "f2_num": "saint_nazaire_3",
+            "count": 12
+          },
+          {
+            "f2_num": "la_teste_14",
+            "count": 12
+          },
+          {
+            "f2_num": "saint_herblain_8",
+            "count": 12
+          },
+          {
+            "f2_num": "new_delhi_13",
+            "count": 12
+          },
+          {
+            "f2_num": "club_des_6",
+            "count": 12
+          },
+          {
+            "f2_num": "maison_de_10",
+            "count": 12
+          },
+          {
+            "f2_num": "association_de_5",
+            "count": 12
+          },
+          {
+            "f2_num": "maison_de_1",
+            "count": 12
+          },
+          {
+            "f2_num": "f\u00e9d\u00e9ration_de_5",
+            "count": 12
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_6",
+            "count": 11
+          },
+          {
+            "f2_num": "saint_nazaire_17",
+            "count": 11
+          },
+          {
+            "f2_num": "club_du_6",
+            "count": 11
+          },
+          {
+            "f2_num": "comit\u00e9_des_11",
+            "count": 11
+          },
+          {
+            "f2_num": "f\u00e9d\u00e9ration_des_14",
+            "count": 11
+          },
+          {
+            "f2_num": "new_delhi_12",
+            "count": 11
+          },
+          {
+            "f2_num": "new_delhi_5",
+            "count": 11
+          },
+          {
+            "f2_num": "maison_de_4",
+            "count": 11
+          },
+          {
+            "f2_num": "club_du_7",
+            "count": 11
+          },
+          {
+            "f2_num": "amicale_des_17",
+            "count": 10
+          },
+          {
+            "f2_num": "association_de_13",
+            "count": 10
+          },
+          {
+            "f2_num": "new_delhi_9",
+            "count": 10
+          },
+          {
+            "f2_num": "centre_hospitalier_1",
+            "count": 10
+          },
+          {
+            "f2_num": "maison_de_13",
+            "count": 10
+          },
+          {
+            "f2_num": "club_du_9",
+            "count": 10
+          },
+          {
+            "f2_num": "saint_herblain_19",
+            "count": 10
+          },
+          {
+            "f2_num": "comit\u00e9_des_8",
+            "count": 10
+          },
+          {
+            "f2_num": "centre_hospitalier_10",
+            "count": 10
+          },
+          {
+            "f2_num": "maison_de_16",
+            "count": 10
+          },
+          {
+            "f2_num": "saint_nazaire_7",
+            "count": 10
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_7",
+            "count": 10
+          },
+          {
+            "f2_num": "amicale_du_10",
+            "count": 10
+          },
+          {
+            "f2_num": "f\u00e9d\u00e9ration_des_7",
+            "count": 10
+          },
+          {
+            "f2_num": "\u00e9cole_primaire_11",
+            "count": 10
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_8",
+            "count": 10
+          },
+          {
+            "f2_num": "\u00e9cole_primaire_24",
+            "count": 9
+          },
+          {
+            "f2_num": "saint_nazaire_9",
+            "count": 9
+          },
+          {
+            "f2_num": "\u00e9cole_primaire_2",
+            "count": 9
+          },
+          {
+            "f2_num": "saint_nazaire_8",
+            "count": 9
+          },
+          {
+            "f2_num": "maison_de_27",
+            "count": 9
+          },
+          {
+            "f2_num": "maison_de_3",
+            "count": 9
+          },
+          {
+            "f2_num": "saint_nazaire_1",
+            "count": 9
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_24",
+            "count": 9
+          },
+          {
+            "f2_num": "amicale_de_6",
+            "count": 9
+          },
+          {
+            "f2_num": "union_du_3",
+            "count": 9
+          },
+          {
+            "f2_num": "\u00e9cole_primaire_10",
+            "count": 9
+          },
+          {
+            "f2_num": "new_delhi_15",
+            "count": 9
+          },
+          {
+            "f2_num": "f\u00e9d\u00e9ration_du_4",
+            "count": 9
+          },
+          {
+            "f2_num": "saint_nazaire_5",
+            "count": 9
+          },
+          {
+            "f2_num": "comit\u00e9_des_4",
+            "count": 9
+          },
+          {
+            "f2_num": "amicale_de_18",
+            "count": 9
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_5",
+            "count": 9
+          },
+          {
+            "f2_num": "centre_hospitalier_17",
+            "count": 9
+          },
+          {
+            "f2_num": "saint_nazaire_23",
+            "count": 9
+          },
+          {
+            "f2_num": "la_teste_6",
+            "count": 9
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_5",
+            "count": 9
+          },
+          {
+            "f2_num": "maison_de_14",
+            "count": 9
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_26",
+            "count": 9
+          },
+          {
+            "f2_num": "new_delhi_24",
+            "count": 9
+          },
+          {
+            "f2_num": "maison_de_25",
+            "count": 9
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_20",
+            "count": 9
+          },
+          {
+            "f2_num": "centre_hospitalier_6",
+            "count": 9
+          },
+          {
+            "f2_num": "comit\u00e9_du_29",
+            "count": 9
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_11",
+            "count": 9
+          },
+          {
+            "f2_num": "f\u00e9d\u00e9ration_de_6",
+            "count": 9
+          },
+          {
+            "f2_num": "centre_hospitalier_14",
+            "count": 9
+          },
+          {
+            "f2_num": "club_des_1",
+            "count": 9
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_13",
+            "count": 9
+          },
+          {
+            "f2_num": "association_de_8",
+            "count": 8
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_15",
+            "count": 8
+          },
+          {
+            "f2_num": "maison_de_7",
+            "count": 8
+          },
+          {
+            "f2_num": "\u00e9cole_primaire_3",
+            "count": 8
+          },
+          {
+            "f2_num": "saint_nazaire_22",
+            "count": 8
+          },
+          {
+            "f2_num": "l\u00e8ge_cap_5",
+            "count": 8
+          },
+          {
+            "f2_num": "new_delhi_18",
+            "count": 8
+          },
+          {
+            "f2_num": "f\u00e9d\u00e9ration_de_1",
+            "count": 8
+          },
+          {
+            "f2_num": "saint_herblain_1",
+            "count": 8
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_7",
+            "count": 8
+          },
+          {
+            "f2_num": "centre_m\u00e9dical_22",
+            "count": 8
+          },
+          {
+            "f2_num": "amicale_du_8",
+            "count": 8
+          },
+          {
+            "f2_num": "saint_nazaire_13",
+            "count": 8
+          },
+          {
+            "f2_num": "l\u00e8ge_cap_1",
+            "count": 8
+          },
+          {
+            "f2_num": "la_teste_1",
+            "count": 8
+          },
+          {
+            "f2_num": "\u00e9cole_maternelle_10",
+            "count": 8
+          },
+          {
+            "f2_num": "union_des_18",
+            "count": 8
+          },
+          {
+            "f2_num": "new_delhi_33",
+            "count": 8
+          },
+          {
+            "f2_num": "\u00e9cole_primaire_1",
+            "count": 8
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 41
+      },
+      "pin_cname4": {
+        "total_unique_keys": 24459,
+        "top_10_largest_blocks": [
+          {
+            "pin_cname4": "009007_davi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "13032_happ",
+            "count": 3
+          },
+          {
+            "pin_cname4": "16956_nguy",
+            "count": 3
+          },
+          {
+            "pin_cname4": "15223_town",
+            "count": 3
+          },
+          {
+            "pin_cname4": "27462_conn",
+            "count": 3
+          },
+          {
+            "pin_cname4": "59100_roub",
+            "count": 3
+          },
+          {
+            "pin_cname4": "49240_raci",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14008_rock",
+            "count": 3
+          },
+          {
+            "pin_cname4": "10834_zion",
+            "count": 3
+          },
+          {
+            "pin_cname4": "15549_king",
+            "count": 3
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "pin_cname4": "009007_davi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "13032_happ",
+            "count": 3
+          },
+          {
+            "pin_cname4": "16956_nguy",
+            "count": 3
+          },
+          {
+            "pin_cname4": "15223_town",
+            "count": 3
+          },
+          {
+            "pin_cname4": "27462_conn",
+            "count": 3
+          },
+          {
+            "pin_cname4": "59100_roub",
+            "count": 3
+          },
+          {
+            "pin_cname4": "49240_raci",
+            "count": 3
+          },
+          {
+            "pin_cname4": "14008_rock",
+            "count": 3
+          },
+          {
+            "pin_cname4": "10834_zion",
+            "count": 3
+          },
+          {
+            "pin_cname4": "15549_king",
+            "count": 3
+          },
+          {
+            "pin_cname4": "23429_clas",
+            "count": 3
+          },
+          {
+            "pin_cname4": "59200_comi",
+            "count": 3
+          },
+          {
+            "pin_cname4": "12531_petr",
+            "count": 3
+          },
+          {
+            "pin_cname4": "12721_howl",
+            "count": 3
+          },
+          {
+            "pin_cname4": "008301_ilub",
+            "count": 3
+          },
+          {
+            "pin_cname4": "980206_comm",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14130_ocon",
+            "count": 2
+          },
+          {
+            "pin_cname4": "19820_kimr",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14625_qual",
+            "count": 2
+          },
+          {
+            "pin_cname4": "26618_inte",
+            "count": 2
+          },
+          {
+            "pin_cname4": "18885_uppe",
+            "count": 2
+          },
+          {
+            "pin_cname4": "83014_ceum",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12206_stra",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10123_lowe",
+            "count": 2
+          },
+          {
+            "pin_cname4": "002216_foot",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14316_pion",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13031_loex",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10707_asse",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11213_midw",
+            "count": 2
+          },
+          {
+            "pin_cname4": "012325_lawr",
+            "count": 2
+          },
+          {
+            "pin_cname4": "17758_allb",
+            "count": 2
+          },
+          {
+            "pin_cname4": "16013_gran",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12039_unif",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12515_mead",
+            "count": 2
+          },
+          {
+            "pin_cname4": "17435_ashl",
+            "count": 2
+          },
+          {
+            "pin_cname4": "39090_roma",
+            "count": 2
+          },
+          {
+            "pin_cname4": "43614_card",
+            "count": 2
+          },
+          {
+            "pin_cname4": "34405_4170",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10427_este",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14855_reli",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00644_verr",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10668_jone",
+            "count": 2
+          },
+          {
+            "pin_cname4": "36931_ober",
+            "count": 2
+          },
+          {
+            "pin_cname4": "18817_regi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10646_kest",
+            "count": 2
+          },
+          {
+            "pin_cname4": "19515_mich",
+            "count": 2
+          },
+          {
+            "pin_cname4": "16708_pedi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10640_cont",
+            "count": 2
+          },
+          {
+            "pin_cname4": "012718_corn",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11090_tior",
+            "count": 2
+          },
+          {
+            "pin_cname4": "16922_thom",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12017_summ",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11222_5688",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11425_jame",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10836_pied",
+            "count": 2
+          },
+          {
+            "pin_cname4": "003172_lenn",
+            "count": 2
+          },
+          {
+            "pin_cname4": "003118_chir",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00397_smit",
+            "count": 2
+          },
+          {
+            "pin_cname4": "870629_clea",
+            "count": 2
+          },
+          {
+            "pin_cname4": "17410_garc",
+            "count": 2
+          },
+          {
+            "pin_cname4": "14524_nous",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10713_casc",
+            "count": 2
+          },
+          {
+            "pin_cname4": "15620_oijs",
+            "count": 2
+          },
+          {
+            "pin_cname4": "23993_delt",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11748_trin",
+            "count": 2
+          },
+          {
+            "pin_cname4": "63686_made",
+            "count": 2
+          },
+          {
+            "pin_cname4": "33268_diam",
+            "count": 2
+          },
+          {
+            "pin_cname4": "19923_burk",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13425_newm",
+            "count": 2
+          },
+          {
+            "pin_cname4": "001036_matt",
+            "count": 2
+          },
+          {
+            "pin_cname4": "13490_geor",
+            "count": 2
+          },
+          {
+            "pin_cname4": "75182_mont",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00594_foot",
+            "count": 2
+          },
+          {
+            "pin_cname4": "004273_will",
+            "count": 2
+          },
+          {
+            "pin_cname4": "78575_twen",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00117_vars",
+            "count": 2
+          },
+          {
+            "pin_cname4": "001769_gree",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11415_luce",
+            "count": 2
+          },
+          {
+            "pin_cname4": "31184_best",
+            "count": 2
+          },
+          {
+            "pin_cname4": "003451_slus",
+            "count": 2
+          },
+          {
+            "pin_cname4": "003107_vinc",
+            "count": 2
+          },
+          {
+            "pin_cname4": "33700_suni",
+            "count": 2
+          },
+          {
+            "pin_cname4": "24851_bett",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10304_card",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00104_trus",
+            "count": 2
+          },
+          {
+            "pin_cname4": "36937_dray",
+            "count": 2
+          },
+          {
+            "pin_cname4": "23315_npip",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10291_gold",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10901_ashi",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10008_alej",
+            "count": 2
+          },
+          {
+            "pin_cname4": "29162_maid",
+            "count": 2
+          },
+          {
+            "pin_cname4": "19313_simo",
+            "count": 2
+          },
+          {
+            "pin_cname4": "11519_plat",
+            "count": 2
+          },
+          {
+            "pin_cname4": "18825_back",
+            "count": 2
+          },
+          {
+            "pin_cname4": "10369_chri",
+            "count": 2
+          },
+          {
+            "pin_cname4": "22660_apri",
+            "count": 2
+          },
+          {
+            "pin_cname4": "00207_blue",
+            "count": 2
+          },
+          {
+            "pin_cname4": "12536_silv",
+            "count": 2
+          },
+          {
+            "pin_cname4": "01218_mart",
+            "count": 2
+          },
+          {
+            "pin_cname4": "26077_vpre",
+            "count": 2
+          }
+        ],
+        "blocks_gt_100": 0,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 3
+      },
+      "soundex_num": {
+        "total_unique_keys": 290291,
+        "top_10_largest_blocks": [
+          {
+            "soundex_num": "S600_1",
+            "count": 320
+          },
+          {
+            "soundex_num": "S600_3",
+            "count": 284
+          },
+          {
+            "soundex_num": "S600_2",
+            "count": 240
+          },
+          {
+            "soundex_num": "S600_4",
+            "count": 198
+          },
+          {
+            "soundex_num": "S600_5",
+            "count": 185
+          },
+          {
+            "soundex_num": "S600_6",
+            "count": 166
+          },
+          {
+            "soundex_num": "S530_1",
+            "count": 153
+          },
+          {
+            "soundex_num": "S530_3",
+            "count": 146
+          },
+          {
+            "soundex_num": "S600_8",
+            "count": 139
+          },
+          {
+            "soundex_num": "S600_7",
+            "count": 136
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "soundex_num": "S600_1",
+            "count": 320
+          },
+          {
+            "soundex_num": "S600_3",
+            "count": 284
+          },
+          {
+            "soundex_num": "S600_2",
+            "count": 240
+          },
+          {
+            "soundex_num": "S600_4",
+            "count": 198
+          },
+          {
+            "soundex_num": "S600_5",
+            "count": 185
+          },
+          {
+            "soundex_num": "S600_6",
+            "count": 166
+          },
+          {
+            "soundex_num": "S530_1",
+            "count": 153
+          },
+          {
+            "soundex_num": "S530_3",
+            "count": 146
+          },
+          {
+            "soundex_num": "S600_8",
+            "count": 139
+          },
+          {
+            "soundex_num": "S600_7",
+            "count": 136
+          },
+          {
+            "soundex_num": "S530_2",
+            "count": 126
+          },
+          {
+            "soundex_num": "S600_9",
+            "count": 122
+          },
+          {
+            "soundex_num": "S600_10",
+            "count": 107
+          },
+          {
+            "soundex_num": "S600_12",
+            "count": 107
+          },
+          {
+            "soundex_num": "S600_11",
+            "count": 99
+          },
+          {
+            "soundex_num": "S600_14",
+            "count": 98
+          },
+          {
+            "soundex_num": "S530_4",
+            "count": 92
+          },
+          {
+            "soundex_num": "S530_8",
+            "count": 91
+          },
+          {
+            "soundex_num": "S500_3",
+            "count": 90
+          },
+          {
+            "soundex_num": "S500_1",
+            "count": 90
+          },
+          {
+            "soundex_num": "I530_3",
+            "count": 90
+          },
+          {
+            "soundex_num": "S530_5",
+            "count": 86
+          },
+          {
+            "soundex_num": "N000_1",
+            "count": 83
+          },
+          {
+            "soundex_num": "S600_13",
+            "count": 82
+          },
+          {
+            "soundex_num": "S000_1",
+            "count": 79
+          },
+          {
+            "soundex_num": "C536_1",
+            "count": 78
+          },
+          {
+            "soundex_num": "S530_7",
+            "count": 76
+          },
+          {
+            "soundex_num": "S500_2",
+            "count": 73
+          },
+          {
+            "soundex_num": "I530_1",
+            "count": 72
+          },
+          {
+            "soundex_num": "S600_17",
+            "count": 72
+          },
+          {
+            "soundex_num": "S600_16",
+            "count": 72
+          },
+          {
+            "soundex_num": "S530_6",
+            "count": 70
+          },
+          {
+            "soundex_num": "I530_2",
+            "count": 70
+          },
+          {
+            "soundex_num": "N000_3",
+            "count": 69
+          },
+          {
+            "soundex_num": "S600_20",
+            "count": 67
+          },
+          {
+            "soundex_num": "C600_3",
+            "count": 67
+          },
+          {
+            "soundex_num": "S100_1",
+            "count": 66
+          },
+          {
+            "soundex_num": "S600_23",
+            "count": 65
+          },
+          {
+            "soundex_num": "S530_10",
+            "count": 65
+          },
+          {
+            "soundex_num": "S000_3",
+            "count": 65
+          },
+          {
+            "soundex_num": "C536_2",
+            "count": 64
+          },
+          {
+            "soundex_num": "S600_22",
+            "count": 64
+          },
+          {
+            "soundex_num": "S530_9",
+            "count": 63
+          },
+          {
+            "soundex_num": "S200_3",
+            "count": 63
+          },
+          {
+            "soundex_num": "T200_1",
+            "count": 62
+          },
+          {
+            "soundex_num": "C600_1",
+            "count": 62
+          },
+          {
+            "soundex_num": "S530_12",
+            "count": 60
+          },
+          {
+            "soundex_num": "S600_18",
+            "count": 58
+          },
+          {
+            "soundex_num": "S530_17",
+            "count": 56
+          },
+          {
+            "soundex_num": "S600_15",
+            "count": 56
+          },
+          {
+            "soundex_num": "S530_11",
+            "count": 55
+          },
+          {
+            "soundex_num": "S600_27",
+            "count": 55
+          },
+          {
+            "soundex_num": "S100_3",
+            "count": 54
+          },
+          {
+            "soundex_num": "S500_4",
+            "count": 53
+          },
+          {
+            "soundex_num": "R200_3",
+            "count": 53
+          },
+          {
+            "soundex_num": "C536_3",
+            "count": 53
+          },
+          {
+            "soundex_num": "R200_1",
+            "count": 52
+          },
+          {
+            "soundex_num": "S500_8",
+            "count": 52
+          },
+          {
+            "soundex_num": "S200_6",
+            "count": 51
+          },
+          {
+            "soundex_num": "C536_4",
+            "count": 51
+          },
+          {
+            "soundex_num": "S600_24",
+            "count": 51
+          },
+          {
+            "soundex_num": "C536_6",
+            "count": 50
+          },
+          {
+            "soundex_num": "S530_13",
+            "count": 50
+          },
+          {
+            "soundex_num": "S600_21",
+            "count": 50
+          },
+          {
+            "soundex_num": "S600_19",
+            "count": 50
+          },
+          {
+            "soundex_num": "M250_6",
+            "count": 50
+          },
+          {
+            "soundex_num": "S530_14",
+            "count": 49
+          },
+          {
+            "soundex_num": "A200_3",
+            "count": 49
+          },
+          {
+            "soundex_num": "R400_1",
+            "count": 49
+          },
+          {
+            "soundex_num": "T200_3",
+            "count": 48
+          },
+          {
+            "soundex_num": "L250_1",
+            "count": 48
+          },
+          {
+            "soundex_num": "S000_2",
+            "count": 47
+          },
+          {
+            "soundex_num": "S300_3",
+            "count": 47
+          },
+          {
+            "soundex_num": "S200_1",
+            "count": 47
+          },
+          {
+            "soundex_num": "J000_3",
+            "count": 47
+          },
+          {
+            "soundex_num": "S300_1",
+            "count": 47
+          },
+          {
+            "soundex_num": "L250_3",
+            "count": 46
+          },
+          {
+            "soundex_num": "S200_2",
+            "count": 46
+          },
+          {
+            "soundex_num": "S500_6",
+            "count": 46
+          },
+          {
+            "soundex_num": "I530_8",
+            "count": 46
+          },
+          {
+            "soundex_num": "S530_19",
+            "count": 46
+          },
+          {
+            "soundex_num": "S200_8",
+            "count": 45
+          },
+          {
+            "soundex_num": "B420_1",
+            "count": 45
+          },
+          {
+            "soundex_num": "N000_2",
+            "count": 45
+          },
+          {
+            "soundex_num": "M250_1",
+            "count": 45
+          },
+          {
+            "soundex_num": "C410_6",
+            "count": 45
+          },
+          {
+            "soundex_num": "A300_1",
+            "count": 44
+          },
+          {
+            "soundex_num": "M250_13",
+            "count": 44
+          },
+          {
+            "soundex_num": "S530_21",
+            "count": 44
+          },
+          {
+            "soundex_num": "C536_7",
+            "count": 44
+          },
+          {
+            "soundex_num": "S600_25",
+            "count": 43
+          },
+          {
+            "soundex_num": "M250_10",
+            "count": 43
+          },
+          {
+            "soundex_num": "S000_5",
+            "count": 43
+          },
+          {
+            "soundex_num": "M250_3",
+            "count": 43
+          },
+          {
+            "soundex_num": "S530_15",
+            "count": 43
+          },
+          {
+            "soundex_num": "S600_26",
+            "count": 43
+          },
+          {
+            "soundex_num": "S500_5",
+            "count": 43
+          },
+          {
+            "soundex_num": "N532_5",
+            "count": 43
+          },
+          {
+            "soundex_num": "R200_2",
+            "count": 42
+          },
+          {
+            "soundex_num": "S600_32",
+            "count": 42
+          }
+        ],
+        "blocks_gt_100": 14,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 320
+      },
+      "translit_cname": {
+        "total_unique_keys": 414137,
+        "top_10_largest_blocks": [
+          {
+            "translit_cname": "newdelhi",
+            "count": 126
+          },
+          {
+            "translit_cname": "shree",
+            "count": 110
+          },
+          {
+            "translit_cname": "mumbai",
+            "count": 102
+          },
+          {
+            "translit_cname": "behavioralhealth",
+            "count": 79
+          },
+          {
+            "translit_cname": "primarycare",
+            "count": 74
+          },
+          {
+            "translit_cname": "apex",
+            "count": 73
+          },
+          {
+            "translit_cname": "internalmedicine",
+            "count": 72
+          },
+          {
+            "translit_cname": "new",
+            "count": 72
+          },
+          {
+            "translit_cname": "tech",
+            "count": 71
+          },
+          {
+            "translit_cname": "vision",
+            "count": 69
+          }
+        ],
+        "top_100_largest_blocks": [
+          {
+            "translit_cname": "newdelhi",
+            "count": 126
+          },
+          {
+            "translit_cname": "shree",
+            "count": 110
+          },
+          {
+            "translit_cname": "mumbai",
+            "count": 102
+          },
+          {
+            "translit_cname": "behavioralhealth",
+            "count": 79
+          },
+          {
+            "translit_cname": "primarycare",
+            "count": 74
+          },
+          {
+            "translit_cname": "apex",
+            "count": 73
+          },
+          {
+            "translit_cname": "internalmedicine",
+            "count": 72
+          },
+          {
+            "translit_cname": "new",
+            "count": 72
+          },
+          {
+            "translit_cname": "tech",
+            "count": 71
+          },
+          {
+            "translit_cname": "vision",
+            "count": 69
+          },
+          {
+            "translit_cname": "united",
+            "count": 69
+          },
+          {
+            "translit_cname": "kolkata",
+            "count": 69
+          },
+          {
+            "translit_cname": "urgentcare",
+            "count": 67
+          },
+          {
+            "translit_cname": "pediatricdental",
+            "count": 65
+          },
+          {
+            "translit_cname": "blue",
+            "count": 63
+          },
+          {
+            "translit_cname": "all",
+            "count": 63
+          },
+          {
+            "translit_cname": "green",
+            "count": 61
+          },
+          {
+            "translit_cname": "sree",
+            "count": 60
+          },
+          {
+            "translit_cname": "ram",
+            "count": 59
+          },
+          {
+            "translit_cname": "jai",
+            "count": 59
+          },
+          {
+            "translit_cname": "om",
+            "count": 58
+          },
+          {
+            "translit_cname": "family",
+            "count": 58
+          },
+          {
+            "translit_cname": "bordeauxclub",
+            "count": 58
+          },
+          {
+            "translit_cname": "pediatricdentistry",
+            "count": 58
+          },
+          {
+            "translit_cname": "hari",
+            "count": 58
+          },
+          {
+            "translit_cname": "krishna",
+            "count": 57
+          },
+          {
+            "translit_cname": "golden",
+            "count": 57
+          },
+          {
+            "translit_cname": "lilleclub",
+            "count": 56
+          },
+          {
+            "translit_cname": "hotel",
+            "count": 55
+          },
+          {
+            "translit_cname": "physicaltherapy",
+            "count": 54
+          },
+          {
+            "translit_cname": "womenshealth",
+            "count": 54
+          },
+          {
+            "translit_cname": "earnosethroat",
+            "count": 53
+          },
+          {
+            "translit_cname": "white",
+            "count": 52
+          },
+          {
+            "translit_cname": "prime",
+            "count": 52
+          },
+          {
+            "translit_cname": "supreme",
+            "count": 52
+          },
+          {
+            "translit_cname": "star",
+            "count": 52
+          },
+          {
+            "translit_cname": "royal",
+            "count": 51
+          },
+          {
+            "translit_cname": "delhi",
+            "count": 51
+          },
+          {
+            "translit_cname": "first",
+            "count": 51
+          },
+          {
+            "translit_cname": "laxmi",
+            "count": 51
+          },
+          {
+            "translit_cname": "tirupati",
+            "count": 50
+          },
+          {
+            "translit_cname": "sai",
+            "count": 50
+          },
+          {
+            "translit_cname": "shakti",
+            "count": 50
+          },
+          {
+            "translit_cname": "pediatric",
+            "count": 50
+          },
+          {
+            "translit_cname": "surya",
+            "count": 50
+          },
+          {
+            "translit_cname": "silver",
+            "count": 50
+          },
+          {
+            "translit_cname": "unique",
+            "count": 50
+          },
+          {
+            "translit_cname": "south",
+            "count": 50
+          },
+          {
+            "translit_cname": "dynamic",
+            "count": 50
+          },
+          {
+            "translit_cname": "smart",
+            "count": 49
+          },
+          {
+            "translit_cname": "footankle",
+            "count": 49
+          },
+          {
+            "translit_cname": "balaji",
+            "count": 49
+          },
+          {
+            "translit_cname": "bombay",
+            "count": 49
+          },
+          {
+            "translit_cname": "bangalore",
+            "count": 49
+          },
+          {
+            "translit_cname": "dream",
+            "count": 49
+          },
+          {
+            "translit_cname": "raj",
+            "count": 48
+          },
+          {
+            "translit_cname": "shiv",
+            "count": 48
+          },
+          {
+            "translit_cname": "east",
+            "count": 48
+          },
+          {
+            "translit_cname": "north",
+            "count": 48
+          },
+          {
+            "translit_cname": "gujarat",
+            "count": 47
+          },
+          {
+            "translit_cname": "best",
+            "count": 47
+          },
+          {
+            "translit_cname": "classic",
+            "count": 47
+          },
+          {
+            "translit_cname": "maa",
+            "count": 47
+          },
+          {
+            "translit_cname": "great",
+            "count": 47
+          },
+          {
+            "translit_cname": "hyderabad",
+            "count": 47
+          },
+          {
+            "translit_cname": "chiropractic",
+            "count": 47
+          },
+          {
+            "translit_cname": "jay",
+            "count": 46
+          },
+          {
+            "translit_cname": "footanklecare",
+            "count": 46
+          },
+          {
+            "translit_cname": "sky",
+            "count": 46
+          },
+          {
+            "translit_cname": "ace",
+            "count": 46
+          },
+          {
+            "translit_cname": "cardiology",
+            "count": 45
+          },
+          {
+            "translit_cname": "ss",
+            "count": 45
+          },
+          {
+            "translit_cname": "hitech",
+            "count": 45
+          },
+          {
+            "translit_cname": "vijay",
+            "count": 45
+          },
+          {
+            "translit_cname": "chiropracticcare",
+            "count": 45
+          },
+          {
+            "translit_cname": "aditya",
+            "count": 44
+          },
+          {
+            "translit_cname": "lakshmi",
+            "count": 44
+          },
+          {
+            "translit_cname": "urban",
+            "count": 44
+          },
+          {
+            "translit_cname": "bright",
+            "count": 44
+          },
+          {
+            "translit_cname": "baba",
+            "count": 44
+          },
+          {
+            "translit_cname": "meridian",
+            "count": 43
+          },
+          {
+            "translit_cname": "premier",
+            "count": 43
+          },
+          {
+            "translit_cname": "titan",
+            "count": 43
+          },
+          {
+            "translit_cname": "cc",
+            "count": 43
+          },
+          {
+            "translit_cname": "nantesclub",
+            "count": 43
+          },
+          {
+            "translit_cname": "digital",
+            "count": 43
+          },
+          {
+            "translit_cname": "one",
+            "count": 43
+          },
+          {
+            "translit_cname": "creative",
+            "count": 43
+          },
+          {
+            "translit_cname": "red",
+            "count": 42
+          },
+          {
+            "translit_cname": "jain",
+            "count": 42
+          },
+          {
+            "translit_cname": "southern",
+            "count": 42
+          },
+          {
+            "translit_cname": "indo",
+            "count": 42
+          },
+          {
+            "translit_cname": "summit",
+            "count": 42
+          },
+          {
+            "translit_cname": "orthopediccare",
+            "count": 42
+          },
+          {
+            "translit_cname": "urology",
+            "count": 41
+          },
+          {
+            "translit_cname": "swastik",
+            "count": 41
+          },
+          {
+            "translit_cname": "future",
+            "count": 41
+          },
+          {
+            "translit_cname": "al",
+            "count": 41
+          },
+          {
+            "translit_cname": "dermatologycare",
+            "count": 41
+          },
+          {
+            "translit_cname": "anand",
+            "count": 41
+          }
+        ],
+        "blocks_gt_100": 3,
+        "blocks_gt_500": 0,
+        "blocks_gt_1000": 0,
+        "blocks_gt_5000": 0,
+        "blocks_gt_10000": 0,
+        "blocks_gt_50000": 0,
+        "blocks_gt_100000": 0,
+        "max_block_size": 126
+      }
+    }
+  },
+  "feat_and_model_profile": {
+    "feature_family_breakdown": [
+      {
+        "family": "A. Cheap Numeric / Length Features",
+        "time_s": 0.020449399948120117,
+        "pct": 5.315999876042022
+      },
+      {
+        "family": "B. Country & Source Lineage",
+        "time_s": 0.011264324188232422,
+        "pct": 2.9282593200904894
+      },
+      {
+        "family": "C. RapidFuzz Levenshtein & Jaro-Winkler",
+        "time_s": 0.06440424919128418,
+        "pct": 16.74244631070067
+      },
+      {
+        "family": "D. Token Sets & Word Jaccard",
+        "time_s": 0.08790326118469238,
+        "pct": 22.85121943661099
+      },
+      {
+        "family": "E. Character 3-Gram Jaccard",
+        "time_s": 0.16999363899230957,
+        "pct": 44.19132913942174
+      },
+      {
+        "family": "F. Address Numeric / House Number Overlap",
+        "time_s": 0.025599002838134766,
+        "pct": 6.654684062102947
+      },
+      {
+        "family": "G. Interaction Features",
+        "time_s": 0.005062580108642578,
+        "pct": 1.3160618550311445
+      }
+    ],
+    "e2e_feature_extraction_time_s": 0.41701459884643555,
+    "feature_extraction_rows_per_sec": 22545.973272897958,
+    "model_stats": {
+      "model_path": "C:\\Users\\rajms\\ML Hackathon\\Try3\\models\\final\\final_model.txt",
+      "pairs_scored": 9402,
+      "inference_time_s": 0.09947562217712402,
+      "rows_per_second": 94515.61894490103,
+      "ram_used_mb": 0,
+      "inference_pct_of_scoring": 19.25992363998436
+    }
+  }
+}
