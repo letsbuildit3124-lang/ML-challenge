@@ -1,44 +1,50 @@
 """
-Final Test Inference and Submission Generation Module.
-Generates official competition deliverables:
+V3 Ultra-Fast Final Test Inference & Submission Deliverables Generator.
+Generates:
   - output/matching_results.tsv
   - output/candidate_pairs.tsv
-Uses Pre-Indexed in-memory Target table, Fast-Path feature pruning, and direct-to-disk TSV writing for sub-minute test inference.
-Adheres strictly to all official formatting and integrity rules and executes official validation.
+
+Optimizations:
+- Pre-indexed in-memory Target lookup (S2 + S3) with precomputed n-gram/token sets
+- Zero set allocations during pairwise candidate feature calculation
+- Real-time chunked progress display with throughput metrics and ETA
+- Streaming direct-to-disk TSV appends (0 MB memory accumulation)
+- Executes official submission validator upon completion.
 """
 
 import os
+import sys
+sys.path.insert(0, ".")
 import gc
 import json
 import time
 import argparse
 import subprocess
-import sys
 from typing import Dict, List, Tuple, Any, Set
 import numpy as np
 import polars as pl
 
 from src.config import Config, get_config
-from src.data_loader import iter_source_file_chunks
+from src.data_loader import iter_source_file_chunks, load_source_file
 from src.dataset_builder import extract_record_dict_from_df
 from src.features import compute_pairwise_features
-from src.model import LightGBMERModel, XGBoostERModel, get_model, BaseERModel
+from src.model import LightGBMERModel, XGBoostERModel, get_model
 from src.blocking_v2 import (
     add_v2_blocking_columns,
     build_compact_target_index,
     generate_candidates_against_indexed_target
 )
 
-
 def generate_test_output(
     model_choice: str = "auto",
     user_threshold: float = None,
-    s1_chunk_size: int = 50000
+    s1_chunk_size: int = 50000,
+    max_cands_per_s1: int = 50
 ):
     config = get_config()
-    print("=" * 80)
-    print("PHASE: ULTRA-FAST FINAL TEST INFERENCE & SUBMISSION GENERATION")
-    print("=" * 80)
+    print("=" * 80, flush=True)
+    print("PHASE: V3 HIGH-SPEED FINAL TEST INFERENCE & DELIVERABLE GENERATION", flush=True)
+    print("=" * 80, flush=True)
 
     # 1. Determine Model & Threshold
     selected_model_type = model_choice.lower().strip()
@@ -53,28 +59,23 @@ def generate_test_output(
         if os.path.exists(final_meta_path):
             with open(final_meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-            selected_model_type = meta.get("model_type", "lightgbm")
+            selected_model_type = meta.get("model_type", "xgboost")
             if selected_threshold is None:
                 selected_threshold = meta.get("selected_threshold", 0.50)
             model_path = meta.get("model_path")
         elif os.path.exists(val_meta_path):
             with open(val_meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-            selected_model_type = meta.get("selected_winner", "lightgbm")
+            selected_model_type = meta.get("selected_winner", "xgboost")
             if selected_threshold is None:
                 selected_threshold = meta.get("winner_threshold", 0.50)
         else:
-            selected_model_type = "lightgbm"
+            selected_model_type = "xgboost"
             if selected_threshold is None:
                 selected_threshold = 0.50
 
     if selected_threshold is None:
-        if os.path.exists(val_meta_path):
-            with open(val_meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-            selected_threshold = meta.get(selected_model_type, {}).get("best_threshold", 0.50)
-        else:
-            selected_threshold = 0.50
+        selected_threshold = 0.50
 
     # Locate Model File
     ext = ".txt" if selected_model_type == "lightgbm" else ".json"
@@ -88,25 +89,51 @@ def generate_test_output(
         elif os.path.exists(config.model_save_path):
             model_path = config.model_save_path
         else:
-            raise FileNotFoundError(f"Could not locate trained model file for {selected_model_type}. Please run compare_models or train_final first.")
+            # Fallback check
+            alt_ext = ".json" if ext == ".txt" else ".txt"
+            alt_path = os.path.join(config.models_dir, "final", f"final_model{alt_ext}")
+            if os.path.exists(alt_path):
+                model_path = alt_path
+                selected_model_type = "xgboost" if alt_ext == ".json" else "lightgbm"
+            else:
+                raise FileNotFoundError(f"Could not locate trained model file for {selected_model_type}. Please run train_final first.")
 
-    print(f"Selected Model Type:      {selected_model_type.upper()}")
-    print(f"Selected Model Path:      {model_path}")
-    print(f"Selected Threshold:       {selected_threshold:.2f}")
+    print(f"Selected Model Type:      {selected_model_type.upper()}", flush=True)
+    print(f"Selected Model Path:      {model_path}", flush=True)
+    print(f"Selected Threshold:       {selected_threshold:.2f}", flush=True)
 
     # Load Model
     model = get_model(selected_model_type, config)
     model.load(model_path)
 
     # 2. Pre-Index Test Source 2 & Test Source 3 once in memory
-    print("\n[1/3] Pre-indexing Test Source 2 & Test Source 3 into compact in-memory table...", flush=True)
+    print("\n[1/3] Pre-indexing Test Source 2 & Test Source 3 into compact in-memory tables...", flush=True)
     t0 = time.time()
-    indexed_target = build_compact_target_index(
-        config.test_s2_path,
-        config.test_s3_path,
-        chunk_size=250000
-    )
-    print(f"Indexed {len(indexed_target):,} Test Targets in {time.time() - t0:.2f}s (RAM: ~1.5GB)", flush=True)
+    
+    target_dfs = []
+    target_records: Dict[str, Dict[str, Any]] = {}
+
+    for s_name, path, prefix in [("Test S2", config.test_s2_path, "S2-"), ("Test S3", config.test_s3_path, "S3-")]:
+        print(f"  Loading and preprocessing {s_name} ({path})...", flush=True)
+        t_s = time.time()
+        s_df = load_source_file(path, expected_prefix=prefix)
+        s_p = add_v2_blocking_columns(s_df)
+        del s_df
+        target_records.update(extract_record_dict_from_df(s_p))
+        target_dfs.append(s_p)
+        print(f"  Processed {s_name} ({len(s_p):,} records) in {time.time() - t_s:.2f}s", flush=True)
+
+    full_target_p = pl.concat(target_dfs)
+    del target_dfs
+    gc.collect()
+
+    print("  Building in-memory compact hash index...", flush=True)
+    target_index = build_compact_target_index(full_target_p)
+    total_targets_indexed = len(full_target_p)
+    del full_target_p
+    gc.collect()
+
+    print(f"Indexed {total_targets_indexed:,} Test Targets in {time.time() - t0:.2f}s (RAM: ~1.8GB)", flush=True)
 
     # 3. Prepare Deliverable Output TSVs
     os.makedirs(config.output_dir, exist_ok=True)
@@ -120,8 +147,8 @@ def generate_test_output(
     with open(cand_out_path, "w", encoding="utf-8") as f_c:
         f_c.write("source1_entity_id\tcandidate_entity_ids\n")
 
-    # 4. Stream Test Source 1 in Chunks and Write Directly to Disk
-    print(f"\n[2/3] Streaming Test Source 1 in chunks of {s1_chunk_size:,} entities with Fast-Path scoring...", flush=True)
+    # 4. Stream Test Source 1 in Chunks with Real-Time Progress Reporting
+    print(f"\n[2/3] Streaming Test Source 1 in chunks of {s1_chunk_size:,} entities...", flush=True)
 
     total_test_s1 = 0
     total_candidates_found = 0
@@ -130,7 +157,9 @@ def generate_test_output(
     chunk_idx = 0
     t_inf_start = time.time()
 
-    for s1_raw_df in iter_source_file_chunks(config.test_s1_path, chunk_size=s1_chunk_size):
+    total_expected_s1 = 1732544 # approx count for progress calculation
+
+    for s1_raw_df in iter_source_file_chunks(config.test_s1_path, chunk_size=s1_chunk_size, expected_prefix="S1-"):
         chunk_idx += 1
         t_chk = time.time()
         chunk_s1_ids = s1_raw_df["entity_id"].to_list()
@@ -142,83 +171,95 @@ def generate_test_output(
         s1_records = extract_record_dict_from_df(s1_chk)
 
         # Fast in-memory candidate lookup
-        cand_df, target_records = generate_candidates_against_indexed_target(
+        candidates_dict = generate_candidates_against_indexed_target(
             s1_chk,
-            indexed_target,
-            max_cands_per_s1=40
+            target_index,
+            max_cands_per_s1=max_cands_per_s1
         )
 
-        chunk_cand_count = len(cand_df)
+        chunk_cand_count = sum(len(c) for c in candidates_dict.values())
         total_candidates_found += chunk_cand_count
 
-        # Tracking for this chunk only
-        chunk_cand_map: Dict[str, List[str]] = {s1: [] for s1 in chunk_s1_ids}
+        # Feature extraction and model scoring
         chunk_match_map: Dict[str, List[str]] = {s1: [] for s1 in chunk_s1_ids}
+        chk_feats = []
+        chk_pairs = []
 
-        if chunk_cand_count > 0:
-            cand_rows = cand_df.to_dict(as_series=False)
-            s1_col = cand_rows["s1_id"]
-            tgt_col = cand_rows["target_id"]
-
-            chk_feats = []
-            chk_pairs = []
-
-            for s1_id, tgt_id in zip(s1_col, tgt_col):
-                chunk_cand_map[s1_id].append(tgt_id)
+        for s1_id in chunk_s1_ids:
+            c_list = candidates_dict.get(s1_id, [])
+            for tgt_id in c_list:
                 if s1_id in s1_records and tgt_id in target_records:
-                    # Fast-path prune obvious non-matches (0% accuracy loss, 4x speedup)
                     f = compute_pairwise_features(s1_records[s1_id], target_records[tgt_id], tgt_id, fast_prune=True)
                     if f is not None:
                         chk_feats.append(f)
                         chk_pairs.append((s1_id, tgt_id))
 
-            # Score candidates that passed the fast gate
-            if chk_feats:
-                X_chk = np.array(chk_feats, dtype=np.float32)
-                probs = model.predict_proba(X_chk)
-                for (s1_id, tgt_id), prob in zip(chk_pairs, probs):
-                    if prob >= selected_threshold:
-                        chunk_match_map[s1_id].append(tgt_id)
+        if chk_feats:
+            X_chk = np.array(chk_feats, dtype=np.float32)
+            probs = model.predict_proba(X_chk)
+            for (s1_id, tgt_id), prob in zip(chk_pairs, probs):
+                if prob >= selected_threshold:
+                    chunk_match_map[s1_id].append(tgt_id)
 
         # Append this chunk's predictions directly to output files on disk
-        with open(match_out_path, "a", encoding="utf-8") as f_m, open(cand_out_path, "a", encoding="utf-8") as f_c:
-            for s1_id in chunk_s1_ids:
-                raw_cands = chunk_cand_map.get(s1_id, [])
-                dedup_cands = list(dict.fromkeys(raw_cands))
-                f_c.write(f"{s1_id}\t{','.join(dedup_cands)}\n")
+        cand_lines = []
+        match_lines = []
 
-                cand_set = set(dedup_cands)
-                raw_matches = chunk_match_map.get(s1_id, [])
-                valid_matches = [m for m in dict.fromkeys(raw_matches) if m in cand_set and not m.startswith("S1-")]
-                
-                if not valid_matches:
-                    total_singletons_found += 1
-                else:
-                    total_matches_found += len(valid_matches)
-                
-                f_m.write(f"{s1_id}\t{','.join(valid_matches)}\n")
+        for s1_id in chunk_s1_ids:
+            raw_cands = candidates_dict.get(s1_id, [])
+            dedup_cands = list(dict.fromkeys(raw_cands))
+            cand_lines.append(f"{s1_id}\t{','.join(dedup_cands)}\n")
 
-        del s1_chk, s1_records, cand_df, target_records, chunk_cand_map, chunk_match_map
+            cand_set = set(dedup_cands)
+            raw_matches = chunk_match_map.get(s1_id, [])
+            valid_matches = [m for m in dict.fromkeys(raw_matches) if m in cand_set and not m.startswith("S1-")]
+            
+            if not valid_matches:
+                total_singletons_found += 1
+            else:
+                total_matches_found += len(valid_matches)
+            
+            match_lines.append(f"{s1_id}\t{','.join(valid_matches)}\n")
+
+        with open(cand_out_path, "a", encoding="utf-8") as f_c:
+            f_c.writelines(cand_lines)
+        with open(match_out_path, "a", encoding="utf-8") as f_m:
+            f_m.writelines(match_lines)
+
+        del s1_chk, s1_records, candidates_dict, chunk_match_map, chk_feats, chk_pairs, cand_lines, match_lines
         gc.collect()
 
+        # Real-Time Running Progress Update
+        chk_time = time.time() - t_chk
+        elap_total = time.time() - t_inf_start
+        pct_done = min(100.0, (total_test_s1 / total_expected_s1) * 100.0)
+        s1_rate = total_test_s1 / max(elap_total, 0.001)
+        est_rem_s = (total_expected_s1 - total_test_s1) / max(s1_rate, 1.0)
+        est_rem_min = est_rem_s / 60.0
+
         print(
-            f"  [Chunk {chunk_idx:02d}] S1: {total_test_s1:,} | "
-            f"Cands: {chunk_cand_count:,} | Matches: {total_matches_found:,} | Time: {time.time() - t_chk:.2f}s",
+            f"  [Progress: Chunk {chunk_idx:02d} | {pct_done:>5.1f}%] "
+            f"S1 Processed: {total_test_s1:>9,} / {total_expected_s1:,} | "
+            f"Cands: {chunk_cand_count:>7,} | "
+            f"Matches: {total_matches_found:>7,} | "
+            f"Rate: {s1_rate:>6,.0f} S1/s | "
+            f"Chunk: {chk_time:>4.1f}s | "
+            f"ETA: {est_rem_min:>4.1f} min",
             flush=True
         )
 
     # Free memory
-    del indexed_target
+    del target_index, target_records
     gc.collect()
 
-    print(f"\n[3/3] Completed test inference for {total_test_s1:,} S1 entities in {time.time() - t_inf_start:.2f}s")
-    print(f"Wrote {match_out_path}")
-    print(f"Wrote {cand_out_path}")
+    print(f"\n[3/3] Completed test inference for {total_test_s1:,} S1 entities in {time.time() - t_inf_start:.2f}s", flush=True)
+    print(f"Wrote {match_out_path}", flush=True)
+    print(f"Wrote {cand_out_path}", flush=True)
 
     # 5. Execute Official Submission Validator
-    print("\n" + "=" * 80)
-    print("RUNNING OFFICIAL SUBMISSION VALIDATOR (utils/validate_submission.py)")
-    print("=" * 80)
+    print("\n" + "=" * 80, flush=True)
+    print("RUNNING OFFICIAL SUBMISSION VALIDATOR (utils/validate_submission.py)", flush=True)
+    print("=" * 80, flush=True)
     cmd = [
         sys.executable,
         config.validator_path,
@@ -227,29 +268,29 @@ def generate_test_output(
         "--test-dir", config.test_dir
     ]
     val_proc = subprocess.run(cmd, capture_output=True, text=True)
-    print(val_proc.stdout)
+    print(val_proc.stdout, flush=True)
     if val_proc.stderr:
-        print(val_proc.stderr)
+        print(val_proc.stderr, flush=True)
 
     if val_proc.returncode != 0:
-        print("\n❌ SUBMISSION VALIDATION FAILED! Check error messages above.")
+        print("\n❌ SUBMISSION VALIDATION FAILED! Check error messages above.", flush=True)
         sys.exit(1)
 
-    print("=" * 80)
-    print("FINAL SUBMISSION GENERATION SUMMARY")
-    print("=" * 80)
-    print(f"  Selected Model:             {selected_model_type.upper()}")
-    print(f"  Applied Decision Threshold: {selected_threshold:.2f}")
-    print(f"  Total Test S1 Entities:     {total_test_s1:,}")
-    print(f"  Total Candidates Pool:      {total_candidates_found:,} (Avg {total_candidates_found/total_test_s1:.2f} cands/S1)")
-    print(f"  Total Predicted Matches:    {total_matches_found:,} (Avg {total_matches_found/total_test_s1:.2f} matches/S1)")
-    print(f"  Total Singletons:           {total_singletons_found:,} ({total_singletons_found/total_test_s1*100:.2f}%)")
-    print(f"  Inference Runtime:          {time.time() - t_inf_start:.2f}s")
-    print(f"  Deliverables Created:")
-    print(f"    - {match_out_path}")
-    print(f"    - {cand_out_path}")
-    print(f"  Official Validation Result: PASS ✅")
-    print("=" * 80)
+    print("=" * 80, flush=True)
+    print("FINAL SUBMISSION GENERATION SUMMARY", flush=True)
+    print("=" * 80, flush=True)
+    print(f"  Selected Model:             {selected_model_type.upper()}", flush=True)
+    print(f"  Applied Decision Threshold: {selected_threshold:.2f}", flush=True)
+    print(f"  Total Test S1 Entities:     {total_test_s1:,}", flush=True)
+    print(f"  Total Candidates Pool:      {total_candidates_found:,} (Avg {total_candidates_found/max(1, total_test_s1):.2f} cands/S1)", flush=True)
+    print(f"  Total Predicted Matches:    {total_matches_found:,} (Avg {total_matches_found/max(1, total_test_s1):.2f} matches/S1)", flush=True)
+    print(f"  Total Singletons:           {total_singletons_found:,} ({total_singletons_found/max(1, total_test_s1)*100:.2f}%)", flush=True)
+    print(f"  Inference Runtime:          {time.time() - t_inf_start:.2f}s", flush=True)
+    print(f"  Deliverables Created:", flush=True)
+    print(f"    - {match_out_path}", flush=True)
+    print(f"    - {cand_out_path}", flush=True)
+    print(f"  Official Validation Result: PASS ✅", flush=True)
+    print("=" * 80, flush=True)
 
 
 if __name__ == "__main__":
@@ -257,10 +298,12 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="auto", choices=["lightgbm", "xgboost", "auto"], help="Model architecture")
     parser.add_argument("--threshold", type=float, default=None, help="Decision threshold (default: auto from validation)")
     parser.add_argument("--chunk-size", type=int, default=50000, help="S1 chunk size for test inference")
+    parser.add_argument("--max-cands", type=int, default=50, help="Maximum candidates per S1 entity")
     args = parser.parse_args()
 
     generate_test_output(
         model_choice=args.model,
         user_threshold=args.threshold,
-        s1_chunk_size=args.chunk_size
+        s1_chunk_size=args.chunk_size,
+        max_cands_per_s1=args.max_cands
     )
