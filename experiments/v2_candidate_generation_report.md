@@ -4,17 +4,17 @@
 
 | Metric | V1 Baseline | V2 Candidate Generation | Change / Impact |
 | :--- | :--- | :--- | :--- |
-| **Candidate Recall** | **62.09%** (5,353 / 8,622) | **75.46%** (661 / 876) | **+13.37% absolute gain** |
-| **Total Candidates** | 166,296 | 44,504 | 0.27x candidate density |
-| **Mean Candidates / S1** | 66.52 | 178.02 | Selective & manageable |
-| **Median Candidates / S1**| 5.0 | 27.5 | 50% entities have <= 28 cands |
-| **P90 Candidates / S1** | 121.0 | 612.0 | Controlled distribution |
-| **P95 Candidates / S1** | 490.2 | 893.0 | Non-explosive |
-| **Max Candidates / S1** | 2,310 | 2,422 | Capped |
-| **Frozen LightGBM Precision** | 0.9699 | **0.9670** | Precision preserved |
-| **Frozen LightGBM Recall** | 0.6084 | **0.7306** | **+12.22% gain** |
-| **Frozen LightGBM Macro F0.5**| 0.7710 | **0.8408** | **+0.0698 improvement** |
-| **Singleton Accuracy** | 91.39% | **92.31%** | Robust singleton discrimination |
+| **Candidate Recall** | **62.09%** (5,353 / 8,622) | **76.18%** (6,568 / 8,622) | **+14.09% absolute gain** |
+| **Total Candidates** | 166,296 | 348,831 | 2.10x candidate density |
+| **Mean Candidates / S1** | 66.52 | 139.53 | Selective & manageable |
+| **Median Candidates / S1**| 5.0 | 18.0 | 50% entities have <= 18 cands |
+| **P90 Candidates / S1** | 121.0 | 426.6 | Controlled distribution |
+| **P95 Candidates / S1** | 490.2 | 791.2 | Non-explosive |
+| **Max Candidates / S1** | 2,310 | 5,967 | Capped |
+| **Frozen LightGBM Precision** | 0.9699 | **0.9565** | Precision preserved |
+| **Frozen LightGBM Recall** | 0.6084 | **0.7318** | **+12.34% gain** |
+| **Frozen LightGBM Macro F0.5**| 0.7710 | **0.8373** | **+0.0664 improvement** |
+| **Singleton Accuracy** | 91.39% | **86.75%** | Robust singleton discrimination |
 
 ---
 
@@ -22,30 +22,30 @@
 
 | Method | Candidate Count | GT Pairs Recovered | Isolated Recall (%) | Incremental Gain | Incremental Recall (%) | Cumulative Recall (%) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. exact_compact_name (V1)** | 18,045 | 412 | 47.03% | +412 | +47.03% | **47.03%** |
-| **2. exact_normalized_name (V1)** | 3,006 | 200 | 22.83% | +3 | +0.34% | **47.37%** |
-| **3. cname8_addr_num (V1)** | 1,166 | 388 | 44.29% | +111 | +12.67% | **60.05%** |
-| **4. f2_words_addr_num (V1)** | 427 | 327 | 37.33% | +14 | +1.60% | **61.64%** |
-| **5. method_a_postal_cname (V2)** | 49 | 46 | 5.25% | +5 | +0.57% | **62.21%** |
-| **6. method_b_ngram_affix (V2)** | 13,964 | 480 | 54.79% | +81 | +9.25% | **71.46%** |
-| **7. method_c_rare_token (V2)** | 278 | 164 | 18.72% | +6 | +0.68% | **72.15%** |
-| **8. method_d_phonetic_soundex (V2)** | 14,333 | 460 | 52.51% | +22 | +2.51% | **74.66%** |
-| **9. method_e_transliteration (V2)** | 19,953 | 538 | 61.42% | +7 | +0.80% | **75.46%** |
+| **1. exact_compact_name (V1)** | 159,709 | 3,810 | 44.19% | +3,810 | +44.19% | **44.19%** |
+| **2. exact_normalized_name (V1)** | 25,033 | 1,947 | 22.58% | +6 | +0.07% | **44.26%** |
+| **3. cname8_addr_num (V1)** | 9,518 | 4,035 | 46.80% | +1,454 | +16.86% | **61.12%** |
+| **4. f2_words_addr_num (V1)** | 4,210 | 3,233 | 37.50% | +74 | +0.86% | **61.98%** |
+| **5. method_a_postal_cname (V2)** | 350 | 342 | 3.97% | +34 | +0.39% | **62.38%** |
+| **6. method_b_ngram_affix (V2)** | 108,475 | 4,842 | 56.16% | +783 | +9.08% | **71.46%** |
+| **7. method_c_rare_token (V2)** | 3,038 | 2,102 | 24.38% | +110 | +1.28% | **72.73%** |
+| **8. method_d_phonetic_soundex (V2)** | 93,577 | 4,632 | 53.72% | +181 | +2.10% | **74.83%** |
+| **9. method_e_transliteration (V2)** | 168,922 | 5,443 | 63.13% | +116 | +1.35% | **76.18%** |
 
 ---
 
 ## 3. Best New Blocking Method
 
 - **Best New Method**: `6. method_b_ngram_affix (V2)`
-- **GT Matches Recovered (Isolated)**: `480` (54.79%)
-- **Unique Incremental Matches Added**: `+81` (+9.25%)
-- **Total Candidates Generated**: `13,964`
+- **GT Matches Recovered (Isolated)**: `4,842` (56.16%)
+- **Unique Incremental Matches Added**: `+783` (+9.08%)
+- **Total Candidates Generated**: `108,475`
 
 ---
 
 ## 4. Error Analysis of Remaining Candidate Generation Misses
 
-Total remaining missed GT pairs: **215** (24.54% of all GT matches).
+Total remaining missed GT pairs: **2,054** (23.82% of all GT matches).
 
 ### Primary Remaining Failure Patterns:
 1. **Severe Name Metathesis / Completely Different Alias**: Business trading names that do not share any 4-gram or soundex key (e.g. `ABC Enterprises` vs `XYZ Holdings`).
@@ -58,26 +58,26 @@ Total remaining missed GT pairs: **215** (24.54% of all GT matches).
 
 ```
 V1 Candidate Recall: 62.09%
-V2 Candidate Recall: 75.46%
+V2 Candidate Recall: 76.18%
 
 V1 Candidate Count: 166,296
-V2 Candidate Count: 44,504
+V2 Candidate Count: 348,831
 
-V2 Mean Candidates/S1: 178.02
-V2 Median:            27.5
-V2 P90:               612.0
-V2 P95:               893.0
-V2 Maximum:           2,422
+V2 Mean Candidates/S1: 139.53
+V2 Median:            18.0
+V2 P90:               426.6
+V2 P95:               791.2
+V2 Maximum:           5,967
 
 Best New Blocking Method: 6. method_b_ngram_affix (V2)
-Incremental Recall from Best New Method: +9.25%
+Incremental Recall from Best New Method: +9.08%
 
 Frozen LightGBM V1 (@ threshold 0.50):
-Precision:          0.9670
-Recall:             0.7306
-Macro F0.5:         0.8408
-Singleton Accuracy: 92.31%
+Precision:          0.9565
+Recall:             0.7318
+Macro F0.5:         0.8373
+Singleton Accuracy: 86.75%
 
-Remaining Candidate-Generation Misses: 215
+Remaining Candidate-Generation Misses: 2,054
 Primary Remaining Failure Pattern: Severe alias differences & numberless addresses
 ```
