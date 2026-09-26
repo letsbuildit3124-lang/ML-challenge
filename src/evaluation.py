@@ -2,7 +2,7 @@
 Evaluation module implementing exact competition entity-level Macro F0.5 metric.
 """
 
-from typing import Dict, List, Set, Tuple, Any
+from typing import Dict, List, Set, Tuple, Any, Optional
 import numpy as np
 
 def calculate_single_entity_f05(gt_ids: Set[str], pred_ids: Set[str]) -> Tuple[float, float, float]:

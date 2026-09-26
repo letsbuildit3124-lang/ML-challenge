@@ -371,3 +371,18 @@ def generate_candidates_against_indexed_target(
         candidates[eid] = cands
 
     return candidates
+
+
+def block_s1_against_target_file_chunked(
+    s1_p: pl.DataFrame,
+    target_file_path: str,
+    target_prefix: str,
+    max_cands_per_s1: int = 50,
+    chunk_size: int = 100000
+) -> Tuple[Dict[str, List[str]], pl.DataFrame]:
+    """Legacy helper for compare_models."""
+    df_tgt = load_source_file(target_file_path, expected_prefix=target_prefix)
+    df_tgt_p = add_v2_blocking_columns(df_tgt)
+    target_idx = build_compact_target_index(df_tgt_p)
+    cands = generate_candidates_against_indexed_target(s1_p, target_idx, max_cands_per_s1=max_cands_per_s1)
+    return cands, df_tgt_p
