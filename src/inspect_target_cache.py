@@ -77,7 +77,7 @@ def main():
     print("Direct DuckDB Table Row Counts Verification:")
     try:
         conn = duckdb.connect(db_path, read_only=True)
-        tables = ["targets", "target_tokens"]
+        tables = ["targets"]
         for tbl in tables:
             try:
                 count = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]

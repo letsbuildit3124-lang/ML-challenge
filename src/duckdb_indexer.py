@@ -6,7 +6,7 @@ Key Architectural Principles:
 2. Cache is persisted in `cache/entity_resolution.duckdb` and tracked by `cache/entity_resolution_cache.json`.
 3. All candidate-generation, recall experiments, Arctic, and ML training scripts REUSE the existing target cache.
 4. Experiments do NOT rebuild or re-ingest target data unless explicitly invoked with `--force-rebuild`.
-5. Peak RAM is strictly bounded at < 500MB via chunked streaming, temporary tables, and DuckDB columnar engine.
+5. Peak RAM is strictly bounded at < 200MB via chunked streaming, temporary tables, and strict equi-join passes.
 """
 
 import os
@@ -21,34 +21,26 @@ import polars as pl
 
 from src.config import get_config
 from src.data_loader import iter_source_file_chunks, load_source_file
-from src.blocking_v2 import add_v2_blocking_columns, CORP_STOPWORDS
+from src.blocking_v2 import add_v2_blocking_columns
 
 DEFAULT_DB_PATH = "cache/entity_resolution.duckdb"
 DEFAULT_MANIFEST_PATH = "cache/entity_resolution_cache.json"
 DEFAULT_TMP_DIR = "cache/duckdb_tmp"
-CACHE_VERSION = "v3.2_streamlined_columnar"
-SCHEMA_VERSION = "3.2"
+CACHE_VERSION = "v3.3_clean_equijoins"
+SCHEMA_VERSION = "3.3"
 NORMALIZATION_VERSION = "v3_boundary_aware_translit"
 
-INFORMATIVE_TOKEN_STOPWORDS = set(CORP_STOPWORDS) | {
-    "the", "and", "for", "of", "in", "at", "to", "by", "on", "with",
-    "street", "st", "road", "rd", "avenue", "ave", "lane", "ln", "nagar",
-    "marg", "chowk", "bhavan", "complex", "building", "floor", "suite",
-    "ste", "apt", "unit", "block", "sector", "plot", "house", "room"
-}
-
 AVAILABLE_BLOCKERS = [
-    "blocker_compact_name",
-    "blocker_translit_cname",
-    "blocker_norm_name",
-    "blocker_soundex_num",
-    "blocker_cname8_num",
-    "blocker_f2_num",
-    "blocker_pin_cname4",
-    "blocker_cname_p6",
-    "blocker_addr_street",
-    "blocker_tokens",
-    "blocker_fallback_exact"
+    ("1. Exact Compact Name", 1),
+    ("2. Translit Compact Name", 2),
+    ("3. Exact Normalized Name", 4),
+    ("4. Phonetic Soundex + Num", 8),
+    ("5. CName8 + Addr Num", 16),
+    ("6. Translit CName8 + Num", 32),
+    ("7. First 2 Words + Num", 64),
+    ("8. Postal + Name Prefix-4", 128),
+    ("9. Cross Translit CName8 Num", 256),
+    ("10. Country-Agnostic Fallback", 512),
 ]
 
 def compute_files_fingerprint(paths: List[str]) -> str:
@@ -98,7 +90,7 @@ class DuckDBTargetIndexer:
             self.conn.execute("PRAGMA wal_autocheckpoint='50MB';")
 
     def _init_tables(self):
-        """Creates target primary table and token inverted table."""
+        """Creates target primary table."""
         self._init_connection()
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS targets (
@@ -113,15 +105,7 @@ class DuckDBTargetIndexer:
                 f2_num VARCHAR,
                 pin_cname4 VARCHAR,
                 soundex_num VARCHAR,
-                translit_cname VARCHAR,
-                cname_p6 VARCHAR,
-                addr_street VARCHAR
-            );
-
-            CREATE TABLE IF NOT EXISTS target_tokens (
-                token VARCHAR,
-                country VARCHAR,
-                target_row_id BIGINT
+                translit_cname VARCHAR
             );
         """)
 
@@ -168,13 +152,13 @@ class DuckDBTargetIndexer:
             print(f"  S2 Records:      {manifest.get('source2_rows', 0):,}")
             print(f"  S3 Records:      {manifest.get('source3_rows', 0):,}")
             print(f"  Total Targets:   {manifest.get('total_rows', 0):,}")
-            print(f"  Blockers Ready:  {len(manifest.get('available_blockers', []))} blockers ({', '.join(manifest.get('available_blockers', [])[:4])}...)")
+            print(f"  Blockers Ready:  {len(manifest.get('available_blockers', []))} blockers")
             self._init_connection()
             return manifest
         else:
             raise RuntimeError(
                 f"\n{'='*80}\n"
-                f"[DuckDBCache ERROR] Persistent target cache is missing or invalid!\n"
+                f"[DuckDBCache ERROR] Persistent target cache is missing or outdated!\n"
                 f"Reason: {reason}\n"
                 f"Please build the target cache once by executing:\n"
                 f"    PYTHONPATH=. python3 -m src.build_target_cache --force-rebuild\n"
@@ -200,7 +184,7 @@ class DuckDBTargetIndexer:
             return manifest
 
         print(f"\n" + "=" * 80)
-        print(f"[DuckDBCache] BUILDING PERSISTENT TARGET CACHE (STREAMLINED COLUMNAR)")
+        print(f"[DuckDBCache] BUILDING PERSISTENT TARGET CACHE")
         print(f"Target Database: {self.db_path}")
         print(f"Chunk Size:      {chunk_size:,} rows | Force Rebuild: {force_rebuild}")
         print(f"=" * 80)
@@ -222,7 +206,6 @@ class DuckDBTargetIndexer:
         global_target_row_id = 0
         src_counts = {}
         temp_chunk_parquet = os.path.join(self.tmp_dir, "temp_target_ingest.parquet").replace("\\", "/")
-        temp_tokens_parquet = os.path.join(self.tmp_dir, "temp_tokens_ingest.parquet").replace("\\", "/")
 
         chunk_counter = 0
 
@@ -252,34 +235,12 @@ class DuckDBTargetIndexer:
                 row_ids = list(range(global_target_row_id, global_target_row_id + n_rows))
                 chunk_p = chunk_p.with_columns(pl.Series("target_row_id", row_ids, dtype=pl.Int64))
 
-                # Add additional high-recall columns: Prefix-6 & Address Street Token
-                chunk_p = chunk_p.with_columns([
-                    pl.when(pl.col("compact_name").str.len_chars() >= 6).then(
-                        pl.col("compact_name").str.slice(0, 6)
-                    ).otherwise(None).alias("cname_p6"),
-                    pl.when(pl.col("norm_addr").str.extract(r"(\d+)", 1).is_not_null() & pl.col("norm_addr").str.extract(r"([a-z]{3,})", 1).is_not_null()).then(
-                        pl.concat_str([pl.col("norm_addr").str.extract(r"(\d+)", 1), pl.lit("_"), pl.col("norm_addr").str.extract(r"([a-z]{3,})", 1)])
-                    ).otherwise(None).alias("addr_street")
-                ])
-
-                for col in ["cname8_num", "translit_cname8_num", "f2_num", "pin_cname4", "soundex_num", "translit_cname", "cname_p6", "addr_street"]:
+                for col in ["cname8_num", "translit_cname8_num", "f2_num", "pin_cname4", "soundex_num", "translit_cname"]:
                     if col not in chunk_p.columns:
                         chunk_p = chunk_p.with_columns(pl.lit(None).cast(pl.String).alias(col))
 
-                # Explode informative tokens for inverted token table
-                tokens_df = chunk_p.select(["target_row_id", "country", "norm_name"]).with_columns(
-                    pl.col("norm_name").fill_null("").str.split(" ").alias("token")
-                ).explode("token").filter(
-                    pl.col("token").str.len_chars() >= 3 & (~pl.col("token").is_in(list(INFORMATIVE_TOKEN_STOPWORDS)))
-                ).select([
-                    pl.col("token"),
-                    pl.col("country"),
-                    pl.col("target_row_id")
-                ])
-
                 chunk_p.write_parquet(temp_chunk_parquet)
-                tokens_df.write_parquet(temp_tokens_parquet)
-                del chunk_p, tokens_df
+                del chunk_p
                 gc.collect()
 
                 # Ingestion into targets table
@@ -287,22 +248,12 @@ class DuckDBTargetIndexer:
                     INSERT INTO targets
                     SELECT 
                         target_row_id, eid, country, norm_name, compact_name, norm_addr,
-                        cname8_num, translit_cname8_num, f2_num, pin_cname4, soundex_num, translit_cname,
-                        cname_p6, addr_street
+                        cname8_num, translit_cname8_num, f2_num, pin_cname4, soundex_num, translit_cname
                     FROM read_parquet('{temp_chunk_parquet}');
-                """)
-
-                # Ingestion into target_tokens table
-                self.conn.execute(f"""
-                    INSERT INTO target_tokens
-                    SELECT token, country, target_row_id
-                    FROM read_parquet('{temp_tokens_parquet}');
                 """)
 
                 if os.path.exists(temp_chunk_parquet):
                     os.remove(temp_chunk_parquet)
-                if os.path.exists(temp_tokens_parquet):
-                    os.remove(temp_tokens_parquet)
 
                 global_target_row_id += n_rows
                 src_processed += n_rows
@@ -339,7 +290,7 @@ class DuckDBTargetIndexer:
             "source3_rows": src_counts.get("Train S3", 0),
             "total_rows": global_target_row_id,
             "target_data_fingerprint": compute_files_fingerprint(file_paths),
-            "available_blockers": AVAILABLE_BLOCKERS,
+            "available_blockers": [name for name, bit in AVAILABLE_BLOCKERS],
             "build_duration_seconds": total_time,
             "database_size_mb": db_size_mb
         }
@@ -358,11 +309,10 @@ class DuckDBTargetIndexer:
         self,
         s1_df: pl.DataFrame,
         max_cands_per_s1: int = 100,
-        enable_token_retrieval: bool = True,
         enable_country_fallback: bool = True
     ) -> Dict[str, List[Tuple[str, int, Dict[str, Any]]]]:
         """
-        Executes parallel multi-pass candidate queries against the persistent disk cache.
+        Executes fast, memory-safe equi-join candidate queries against the persistent disk cache.
         Returns:
             Dict[s1_id, List[(target_id, provenance_mask, target_record_dict)]]
         """
@@ -372,37 +322,13 @@ class DuckDBTargetIndexer:
         self._init_connection()
 
         temp_s1_parquet = os.path.join(self.tmp_dir, f"temp_s1_{os.getpid()}_{int(time.time()*1000)%100000}.parquet").replace("\\", "/")
-        temp_s1_tok_parquet = os.path.join(self.tmp_dir, f"temp_s1_tok_{os.getpid()}_{int(time.time()*1000)%100000}.parquet").replace("\\", "/")
 
         s1_p = add_v2_blocking_columns(s1_df)
-        s1_p = s1_p.with_columns([
-            pl.when(pl.col("compact_name").str.len_chars() >= 6).then(
-                pl.col("compact_name").str.slice(0, 6)
-            ).otherwise(None).alias("cname_p6"),
-            pl.when(pl.col("norm_addr").str.extract(r"(\d+)", 1).is_not_null() & pl.col("norm_addr").str.extract(r"([a-z]{3,})", 1).is_not_null()).then(
-                pl.concat_str([pl.col("norm_addr").str.extract(r"(\d+)", 1), pl.lit("_"), pl.col("norm_addr").str.extract(r"([a-z]{3,})", 1)])
-            ).otherwise(None).alias("addr_street")
-        ])
-
-        for col in ["cname8_num", "translit_cname8_num", "f2_num", "pin_cname4", "soundex_num", "translit_cname", "cname_p6", "addr_street"]:
+        for col in ["cname8_num", "translit_cname8_num", "f2_num", "pin_cname4", "soundex_num", "translit_cname"]:
             if col not in s1_p.columns:
                 s1_p = s1_p.with_columns(pl.lit(None).cast(pl.String).alias(col))
 
         s1_p.write_parquet(temp_s1_parquet)
-
-        if enable_token_retrieval:
-            s1_tok_df = s1_p.select(["eid", "country", "norm_name"]).with_columns(
-                pl.col("norm_name").fill_null("").str.split(" ").alias("token")
-            ).explode("token").filter(
-                pl.col("token").str.len_chars() >= 3 & (~pl.col("token").is_in(list(INFORMATIVE_TOKEN_STOPWORDS)))
-            ).select([
-                pl.col("eid").alias("s1_id"),
-                pl.col("country"),
-                pl.col("token").alias("block_key")
-            ])
-            s1_tok_df.write_parquet(temp_s1_tok_parquet)
-            del s1_tok_df
-
         del s1_p
         gc.collect()
 
@@ -416,7 +342,7 @@ class DuckDBTargetIndexer:
             DELETE FROM temp_candidate_hits;
         """)
 
-        # Execute blocker passes sequentially into temp table to keep RAM < 100MB
+        # Execute 10 strict equi-join passes sequentially into temp table (RAM < 50MB)
         passes = [
             # 1. Exact Compact Name (bitmask: 1)
             f"""
@@ -450,63 +376,55 @@ class DuckDBTargetIndexer:
             JOIN targets t ON s.soundex_num = t.soundex_num AND s.country = t.country
             WHERE s.soundex_num IS NOT NULL;
             """,
-            # 5. Cname8 + Address Num (bitmask: 16)
+            # 5. CName8 + Address Num (bitmask: 16)
             f"""
             INSERT INTO temp_candidate_hits
             SELECT s.eid, t.target_row_id, 16
             FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON (s.cname8_num = t.cname8_num OR s.translit_cname8_num = t.translit_cname8_num OR s.cname8_num = t.translit_cname8_num OR s.translit_cname8_num = t.cname8_num) AND s.country = t.country
-            WHERE s.cname8_num IS NOT NULL OR s.translit_cname8_num IS NOT NULL;
+            JOIN targets t ON s.cname8_num = t.cname8_num AND s.country = t.country
+            WHERE s.cname8_num IS NOT NULL;
             """,
-            # 6. First 2 Words + Address Num (bitmask: 32)
+            # 6. Translit CName8 + Address Num (bitmask: 32)
             f"""
             INSERT INTO temp_candidate_hits
             SELECT s.eid, t.target_row_id, 32
             FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON s.f2_num = t.f2_num AND s.country = t.country
-            WHERE s.f2_num IS NOT NULL;
+            JOIN targets t ON s.translit_cname8_num = t.translit_cname8_num AND s.country = t.country
+            WHERE s.translit_cname8_num IS NOT NULL;
             """,
-            # 7. Postal + Name Prefix-4 (bitmask: 64)
+            # 7. First 2 Words + Address Num (bitmask: 64)
             f"""
             INSERT INTO temp_candidate_hits
             SELECT s.eid, t.target_row_id, 64
             FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.f2_num = t.f2_num AND s.country = t.country
+            WHERE s.f2_num IS NOT NULL;
+            """,
+            # 8. Postal + Name Prefix-4 (bitmask: 128)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 128
+            FROM read_parquet('{temp_s1_parquet}') s
             JOIN targets t ON s.pin_cname4 = t.pin_cname4 AND s.country = t.country
             WHERE s.pin_cname4 IS NOT NULL;
             """,
-            # 8. Compact Name Prefix-6 (bitmask: 256)
+            # 9. Cross Translit-Original CName8 Num (bitmask: 256)
             f"""
             INSERT INTO temp_candidate_hits
             SELECT s.eid, t.target_row_id, 256
             FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON s.cname_p6 = t.cname_p6 AND s.country = t.country
-            WHERE s.cname_p6 IS NOT NULL;
-            """,
-            # 9. Address Number + Street Token (bitmask: 512)
-            f"""
-            INSERT INTO temp_candidate_hits
-            SELECT s.eid, t.target_row_id, 512
-            FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON s.addr_street = t.addr_street AND s.country = t.country
-            WHERE s.addr_street IS NOT NULL;
+            JOIN targets t ON s.translit_cname8_num = t.cname8_num AND s.country = t.country
+            WHERE s.translit_cname8_num IS NOT NULL;
             """
         ]
-
-        if enable_token_retrieval and os.path.exists(temp_s1_tok_parquet):
-            passes.append(f"""
-            INSERT INTO temp_candidate_hits
-            SELECT s.s1_id, tt.target_row_id, 128
-            FROM read_parquet('{temp_s1_tok_parquet}') s
-            JOIN target_tokens tt ON s.block_key = tt.token AND s.country = tt.country;
-            """)
 
         if enable_country_fallback:
             passes.append(f"""
             INSERT INTO temp_candidate_hits
-            SELECT s.eid, t.target_row_id, 1024
+            SELECT s.eid, t.target_row_id, 512
             FROM read_parquet('{temp_s1_parquet}') s
             JOIN targets t ON s.compact_name = t.compact_name
-            WHERE s.compact_name IS NOT NULL AND LENGTH(s.compact_name) >= 5;
+            WHERE s.compact_name IS NOT NULL AND LENGTH(s.compact_name) >= 6;
             """)
 
         for sql_pass in passes:
@@ -542,8 +460,6 @@ class DuckDBTargetIndexer:
 
         if os.path.exists(temp_s1_parquet):
             os.remove(temp_s1_parquet)
-        if os.path.exists(temp_s1_tok_parquet):
-            os.remove(temp_s1_tok_parquet)
 
         result: Dict[str, List[Tuple[str, int, Dict[str, Any]]]] = {}
         for s1_id, tid, mask, t_name, t_cname, t_addr, t_ctry in rows:

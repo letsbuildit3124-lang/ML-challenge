@@ -77,13 +77,12 @@ def analyze_blockers(s1_count: int = 1000):
         ("2. Translit Compact Name", 2),
         ("3. Exact Normalized Name", 4),
         ("4. Phonetic Soundex + Num", 8),
-        ("5. Prefix-8 + Address Num", 16),
-        ("6. First 2 Words + Num", 32),
-        ("7. Postal + Name Prefix-4", 64),
-        ("8. Informative Token Index", 128),
-        ("9. Compact Name Prefix-6", 256),
-        ("10. Address Number + Street", 512),
-        ("11. Country-Agnostic Fallback", 1024),
+        ("5. CName8 + Addr Num", 16),
+        ("6. Translit CName8 + Num", 32),
+        ("7. First 2 Words + Num", 64),
+        ("8. Postal + Name Prefix-4", 128),
+        ("9. Cross Translit CName8 Num", 256),
+        ("10. Country-Agnostic Fallback", 512),
     ]
 
     blocker_isolated = defaultdict(int)
