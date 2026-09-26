@@ -525,18 +525,16 @@ def train_full_universe_production_model(
     logger.info("[Step 4/5] Extracting Positive Target Records representing 100% of Matched S1 Entities via DuckDB Parquet Scan...")
     train_target_to_s1: Dict[str, str] = {}
     for sid in train_s1_ids:
-        t_list = gt_map.get(sid, [])
-        if t_list:
-            train_target_to_s1[t_list[0]] = sid
+        for tid in gt_map.get(sid, []):
+            train_target_to_s1[tid] = sid
 
     val_target_to_s1: Dict[str, str] = {}
     for sid in val_s1_ids:
-        t_list = gt_map.get(sid, [])
-        if t_list:
-            val_target_to_s1[t_list[0]] = sid
+        for tid in gt_map.get(sid, []):
+            val_target_to_s1[tid] = sid
 
     all_target_ids = set(train_target_to_s1.keys()) | set(val_target_to_s1.keys())
-    logger.info(f"Selected {len(all_target_ids):,} representative positive targets ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val) covering 100% of matched S1 entities.")
+    logger.info(f"Selected {len(all_target_ids):,} representative positive targets ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val) across Source 2 and Source 3.")
 
     train_features_cache = cache_dir / "train_features.npz"
     if train_features_cache.exists():
@@ -623,6 +621,7 @@ def train_full_universe_production_model(
                     del chunk_rows
 
         con.close()
+        logger.info(f"Target streaming complete in {time.time() - t_mine_start:.2f}s. Assembling feature matrices...")
         if all_train_features:
             X_train = np.vstack(all_train_features)
             y_train = np.concatenate(all_train_labels)
@@ -640,8 +639,10 @@ def train_full_universe_production_model(
         del all_train_features, all_train_labels, val_features, val_labels
         gc.collect()
 
-        logger.info(f"Saving extracted feature matrices to persistent cache: {train_features_cache}...")
-        np.savez_compressed(train_features_cache, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val)
+        logger.info(f"Saving extracted feature matrices to persistent cache: {train_features_cache} (instant binary save)...")
+        t_save = time.time()
+        np.savez(train_features_cache, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val)
+        logger.info(f"Saved feature cache in {time.time() - t_save:.2f}s!")
         logger.info(f"Full Training Feature Matrix: X shape {X_train.shape} ({int(np.sum(y_train)):,} Positives, {int(len(y_train)-np.sum(y_train)):,} Negatives).")
         logger.info(f"Validation Feature Matrix: X shape {X_val.shape} ({int(np.sum(y_val)):,} Positives, {int(len(y_val)-np.sum(y_val)):,} Negatives).")
 
