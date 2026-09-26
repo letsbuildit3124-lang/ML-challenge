@@ -72,13 +72,10 @@ def run_recall_ladder(
     print(f"Evaluation S1 Count:   {len(eval_s1_ids):,}")
     print(f"Total True GT Pairs:   {total_gt_pairs:,} (S2: {total_s2_gt:,}, S3: {total_s3_gt:,})")
 
-    # 2. Build or Load DuckDB Disk Index
+    # 2. Ensure DuckDB Target Cache is Ready (Persistent Cache)
     indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
-    source_configs = [
-        ("Train S2", config.train_s2_path, "S2-"),
-        ("Train S3", config.train_s3_path, "S3-")
-    ]
-    total_indexed = indexer.build_index_from_sources(source_configs, chunk_size=100000, rebuild=rebuild_index)
+    expected_sources = [config.train_s2_path, config.train_s3_path]
+    indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
 
     # 3. Load S1 records
     s1_full_df = load_source_file(config.train_s1_path, expected_prefix="S1-")

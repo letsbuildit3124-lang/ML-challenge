@@ -59,13 +59,10 @@ def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
     total_gt_pairs = len(gt_pairs_set)
     print(f"Auditing {len(eval_s1_ids):,} S1 Entities ({total_gt_pairs:,} GT Pairs)...")
 
-    # 2. Query DuckDB Candidates
+    # 2. Query DuckDB Candidates from Persistent Cache
     indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
-    source_configs = [
-        ("Train S2", config.train_s2_path, "S2-"),
-        ("Train S3", config.train_s3_path, "S3-")
-    ]
-    indexer.build_index_from_sources(source_configs, chunk_size=100000)
+    expected_sources = [config.train_s2_path, config.train_s3_path]
+    indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
 
     s1_full_df = load_source_file(config.train_s1_path, expected_prefix="S1-")
     s1_eval_df = s1_full_df.filter(pl.col("entity_id").is_in(eval_s1_ids))

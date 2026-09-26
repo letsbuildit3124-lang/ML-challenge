@@ -1,26 +1,20 @@
 """
-Antigravity V3 High-Recall Disk-Backed DuckDB Target Indexer & Candidate Engine.
-Targeting >= 99% Pair-Level Candidate Recall.
+Antigravity V3 Persistent DuckDB Target Cache & Candidate Generation Engine.
 
-Ensemble of 10+ Complementary Blocker Mechanisms:
-1. Exact Compact Name (+ country)
-2. Exact Normalized Name (+ country)
-3. Transliterated Compact Name (+ country)
-4. Compact Name Prefix-6 (+ country)
-5. Informative Token Index (non-stopword tokens >= 3 chars)
-6. Compact Name Prefix-8 + Address Number
-7. First 2 Words + Address Number
-8. Postal Code + Name Prefix-4
-9. Phonetic Soundex + Address Number
-10. Address Number + Street Token
-11. Country-Agnostic Fallback (Compact Name >= 5 chars, cross-country robustness)
-
-Peak RAM is strictly bounded at < 1.5GB via chunked DuckDB disk persistence.
+Key Architectural Principles:
+1. Target data preparation (S2 + S3 ingestion, normalization, indexing) is executed ONCE via `src.build_target_cache`.
+2. Cache is persisted in `cache/entity_resolution.duckdb` and tracked by `cache/entity_resolution_cache.json`.
+3. All candidate-generation, recall experiments, Arctic, and ML training scripts REUSE the existing target cache.
+4. Experiments do NOT rebuild or re-ingest target data unless explicitly invoked with `--force-rebuild`.
+5. Peak RAM is strictly bounded at < 1.5GB via chunked streaming and DuckDB disk storage.
 """
 
 import os
 import gc
+import json
 import time
+import hashlib
+from datetime import datetime
 from typing import Dict, List, Set, Tuple, Any, Optional
 import duckdb
 import polars as pl
@@ -30,9 +24,12 @@ from src.data_loader import iter_source_file_chunks, load_source_file
 from src.blocking_v2 import add_v2_blocking_columns, CORP_STOPWORDS
 
 DEFAULT_DB_PATH = "cache/entity_resolution.duckdb"
+DEFAULT_MANIFEST_PATH = "cache/entity_resolution_cache.json"
 DEFAULT_TMP_DIR = "cache/duckdb_tmp"
+CACHE_VERSION = "v3.1_multilingual_ensemble"
+SCHEMA_VERSION = "3.1"
+NORMALIZATION_VERSION = "v3_boundary_aware_translit"
 
-# Common stopwords to exclude from pure token indexing to avoid massive blocks
 INFORMATIVE_TOKEN_STOPWORDS = set(CORP_STOPWORDS) | {
     "the", "and", "for", "of", "in", "at", "to", "by", "on", "with",
     "street", "st", "road", "rd", "avenue", "ave", "lane", "ln", "nagar",
@@ -40,20 +37,47 @@ INFORMATIVE_TOKEN_STOPWORDS = set(CORP_STOPWORDS) | {
     "ste", "apt", "unit", "block", "sector", "plot", "house", "room"
 }
 
+AVAILABLE_INDEXES = [
+    "idx_compact_name",
+    "idx_translit_cname",
+    "idx_norm_name",
+    "idx_cname_p6",
+    "idx_tokens",
+    "idx_soundex_num",
+    "idx_cname8_num",
+    "idx_f2_num",
+    "idx_pin_cname4",
+    "idx_addr_street",
+    "idx_fallback_exact"
+]
+
+def compute_files_fingerprint(paths: List[str]) -> str:
+    """Computes a deterministic fingerprint string based on file paths, sizes, and mtimes."""
+    parts = []
+    for p in paths:
+        if os.path.exists(p):
+            stat = os.stat(p)
+            parts.append(f"{os.path.basename(p)}:{stat.st_size}:{int(stat.st_mtime)}")
+        else:
+            parts.append(f"{os.path.basename(p)}:missing")
+    return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
+
 class DuckDBTargetIndexer:
     """
-    High-recall disk-backed target indexer powered by DuckDB.
-    Eliminates in-memory 10.3M Python dictionaries while reaching >=99% candidate recall.
+    Persistent Disk-Backed DuckDB Target Cache Manager.
+    Separates one-time target ingestion from repeated experimental candidate queries.
     """
     def __init__(
         self,
         db_path: Optional[str] = None,
+        manifest_path: Optional[str] = None,
         memory_limit: str = "2GB",
         threads: int = 2,
         tmp_dir: Optional[str] = None
     ):
         config = get_config()
         self.db_path = db_path or os.path.join(config.base_dir, DEFAULT_DB_PATH)
+        self.manifest_path = manifest_path or os.path.join(config.base_dir, DEFAULT_MANIFEST_PATH)
         self.tmp_dir = tmp_dir or os.path.join(config.base_dir, DEFAULT_TMP_DIR)
         self.memory_limit = memory_limit
         self.threads = threads
@@ -61,24 +85,19 @@ class DuckDBTargetIndexer:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         os.makedirs(self.tmp_dir, exist_ok=True)
 
-        self.conn = None
-        self._init_connection()
+        self.conn: Optional[duckdb.DuckDBPyConnection] = None
 
     def _init_connection(self):
         """Initializes DuckDB connection with strict memory limits."""
-        if self.conn is not None:
-            try:
-                self.conn.close()
-            except Exception:
-                pass
-
-        self.conn = duckdb.connect(self.db_path)
-        self.conn.execute(f"SET memory_limit='{self.memory_limit}';")
-        self.conn.execute(f"SET threads={self.threads};")
-        self.conn.execute(f"SET temp_directory='{self.tmp_dir.replace(chr(92), '/')}';")
+        if self.conn is None:
+            self.conn = duckdb.connect(self.db_path)
+            self.conn.execute(f"SET memory_limit='{self.memory_limit}';")
+            self.conn.execute(f"SET threads={self.threads};")
+            self.conn.execute(f"SET temp_directory='{self.tmp_dir.replace(chr(92), '/')}';")
 
     def _init_tables(self):
         """Creates target primary table and index tables."""
+        self._init_connection()
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS targets (
                 target_row_id BIGINT PRIMARY KEY,
@@ -110,55 +129,110 @@ class DuckDBTargetIndexer:
             CREATE TABLE IF NOT EXISTS idx_fallback_exact (block_key VARCHAR, target_row_id BIGINT);
         """)
 
-    def count_indexed_targets(self) -> int:
-        """Returns the number of target rows currently stored in DuckDB."""
-        try:
-            res = self.conn.execute("SELECT COUNT(*) FROM targets").fetchone()
-            return res[0] if res else 0
-        except Exception:
-            return 0
+    def validate_cache(self, expected_source_paths: Optional[List[str]] = None) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        Fast lightweight cache validation (takes < 0.02 seconds).
+        Checks manifest, database file existence, schema version, and source fingerprints.
+        """
+        if not os.path.exists(self.db_path):
+            return False, f"Database file not found at {self.db_path}", {}
 
-    def build_index_from_sources(
+        if not os.path.exists(self.manifest_path):
+            return False, f"Cache manifest not found at {self.manifest_path}", {}
+
+        try:
+            with open(self.manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception as e:
+            return False, f"Failed to parse cache manifest: {e}", {}
+
+        if manifest.get("cache_version") != CACHE_VERSION:
+            return False, f"Cache version mismatch (Found: {manifest.get('cache_version')}, Expected: {CACHE_VERSION})", manifest
+
+        if manifest.get("total_rows", 0) <= 0:
+            return False, "Cache manifest indicates 0 indexed target rows", manifest
+
+        if expected_source_paths:
+            current_fp = compute_files_fingerprint(expected_source_paths)
+            if manifest.get("target_data_fingerprint") != current_fp:
+                return False, "Source dataset files have changed on disk (fingerprint mismatch)", manifest
+
+        return True, "Cache is valid and ready for reuse", manifest
+
+    def ensure_cache_ready(self, expected_source_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Ensures the persistent cache is ready for experiments.
+        Reuses existing cache if valid. If invalid, raises an explicit error directing to build_target_cache.
+        """
+        is_valid, reason, manifest = self.validate_cache(expected_source_paths)
+        if is_valid:
+            db_size_mb = os.path.getsize(self.db_path) / (1024 * 1024)
+            print(f"[DuckDBCache] Reusing existing persistent target cache.")
+            print(f"  Database:        {self.db_path} ({db_size_mb:.2f} MB)")
+            print(f"  S2 Records:      {manifest.get('source2_rows', 0):,}")
+            print(f"  S3 Records:      {manifest.get('source3_rows', 0):,}")
+            print(f"  Total Targets:   {manifest.get('total_rows', 0):,}")
+            print(f"  Indexes Ready:   {len(manifest.get('available_indexes', []))} indexes ({', '.join(manifest.get('available_indexes', [])[:4])}...)")
+            self._init_connection()
+            return manifest
+        else:
+            raise RuntimeError(
+                f"\n{'='*80}\n"
+                f"[DuckDBCache ERROR] Persistent target cache is missing or invalid!\n"
+                f"Reason: {reason}\n"
+                f"Please build the target cache once by executing:\n"
+                f"    PYTHONPATH=. python3 -m src.build_target_cache --force-rebuild\n"
+                f"{'='*80}"
+            )
+
+    def build_cache_from_sources(
         self,
         source_paths: List[Tuple[str, str, str]], # (source_name, file_path, prefix)
         chunk_size: int = 100000,
         limit_per_file: Optional[int] = None,
-        rebuild: bool = False
-    ) -> int:
+        force_rebuild: bool = False
+    ) -> Dict[str, Any]:
         """
-        Streams target TSV files in chunks, computes high-recall blocking representations,
-        and writes directly to disk-backed DuckDB.
+        Builds the persistent DuckDB target cache from raw TSV sources.
+        Called strictly by `src.build_target_cache`.
         """
-        current_count = self.count_indexed_targets()
-        if not rebuild and current_count > 0:
-            print(f"[DuckDBIndexer] Reusing existing disk index at {self.db_path} ({current_count:,} target records).", flush=True)
-            return current_count
+        file_paths = [p for name, p, pref in source_paths]
+        is_valid, reason, manifest = self.validate_cache(file_paths)
 
-        if rebuild or current_count == 0:
-            print(f"[DuckDBIndexer] Building fresh disk-backed index at: {self.db_path}", flush=True)
-            self.conn.execute("DROP TABLE IF EXISTS targets;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_compact_name;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_translit_cname;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_norm_name;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_cname_p6;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_tokens;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_soundex_num;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_cname8_num;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_f2_num;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_pin_cname4;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_addr_street;")
-            self.conn.execute("DROP TABLE IF EXISTS idx_fallback_exact;")
-            self._init_tables()
+        if not force_rebuild and is_valid and limit_per_file is None:
+            print(f"[DuckDBCache] Target cache is already up-to-date. Reusing {self.db_path} ({manifest.get('total_rows', 0):,} records).")
+            return manifest
+
+        print(f"\n" + "=" * 80)
+        print(f"[DuckDBCache] BUILDING PERSISTENT TARGET CACHE")
+        print(f"Target Database: {self.db_path}")
+        print(f"Chunk Size:      {chunk_size:,} rows | Force Rebuild: {force_rebuild}")
+        print(f"=" * 80)
+
+        # Close and remove existing database if forcing rebuild
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
+
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+        if os.path.exists(self.manifest_path):
+            os.remove(self.manifest_path)
+
+        self._init_connection()
+        self._init_tables()
 
         t0 = time.time()
         global_target_row_id = 0
+        src_counts = {}
         temp_chunk_parquet = os.path.join(self.tmp_dir, "temp_target_ingest.parquet").replace("\\", "/")
         temp_tokens_parquet = os.path.join(self.tmp_dir, "temp_tokens_ingest.parquet").replace("\\", "/")
 
         for src_name, path, prefix in source_paths:
-            print(f"\n[DuckDBIndexer] Ingesting {src_name} ({path})...", flush=True)
+            print(f"\n[DuckDBCache] Ingesting {src_name} ({path})...", flush=True)
             if not os.path.exists(path):
-                print(f"  Warning: File {path} does not exist. Skipping.")
+                print(f"  Warning: File {path} not found. Skipping.")
+                src_counts[src_name] = 0
                 continue
 
             src_processed = 0
@@ -177,7 +251,6 @@ class DuckDBTargetIndexer:
                 chunk_p = add_v2_blocking_columns(chunk_df)
                 del chunk_df
 
-                # Assign monotonic integer IDs
                 row_ids = list(range(global_target_row_id, global_target_row_id + n_rows))
                 chunk_p = chunk_p.with_columns(pl.Series("target_row_id", row_ids, dtype=pl.Int64))
 
@@ -209,7 +282,6 @@ class DuckDBTargetIndexer:
                     pl.col("target_row_id")
                 ])
 
-                # Write chunk to temp parquet and stream into DuckDB
                 chunk_p.write_parquet(temp_chunk_parquet)
                 tokens_df.write_parquet(temp_tokens_parquet)
                 del chunk_p, tokens_df
@@ -299,8 +371,10 @@ class DuckDBTargetIndexer:
                 speed = src_processed / (time.time() - t_src)
                 print(f"  -> Ingested {pct_str} records into DuckDB | Rate: {speed:,.0f} rows/s", flush=True)
 
-        # Build disk ART indexes on (block_key, country)
-        print("\n[DuckDBIndexer] Building disk-backed ART indexes...", flush=True)
+            src_counts[src_name] = src_processed
+
+        # Build disk ART indexes
+        print("\n[DuckDBCache] Building disk-backed ART indexes...", flush=True)
         t_idx_start = time.time()
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_art_cn ON idx_compact_name (block_key, country);
@@ -315,12 +389,37 @@ class DuckDBTargetIndexer:
             CREATE INDEX IF NOT EXISTS idx_art_str ON idx_addr_street (block_key, country);
             CREATE INDEX IF NOT EXISTS idx_art_fb ON idx_fallback_exact (block_key);
         """)
-        print(f"[DuckDBIndexer] ART indexes created in {time.time() - t_idx_start:.2f}s.", flush=True)
+        print(f"[DuckDBCache] ART indexes created in {time.time() - t_idx_start:.2f}s.", flush=True)
 
         total_time = time.time() - t0
         db_size_mb = os.path.getsize(self.db_path) / (1024 * 1024) if os.path.exists(self.db_path) else 0
-        print(f"[DuckDBIndexer] Successfully indexed {global_target_row_id:,} target records into {self.db_path} ({db_size_mb:.2f} MB on disk) in {total_time:.2f}s.", flush=True)
-        return global_target_row_id
+
+        # Save Cache Manifest
+        manifest_data = {
+            "cache_version": CACHE_VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "normalization_version": NORMALIZATION_VERSION,
+            "created_at": datetime.now().isoformat(),
+            "source2_path": source_paths[0][1] if len(source_paths) > 0 else "",
+            "source3_path": source_paths[1][1] if len(source_paths) > 1 else "",
+            "source2_rows": src_counts.get("Train S2", 0),
+            "source3_rows": src_counts.get("Train S3", 0),
+            "total_rows": global_target_row_id,
+            "target_data_fingerprint": compute_files_fingerprint(file_paths),
+            "available_indexes": AVAILABLE_INDEXES,
+            "build_duration_seconds": total_time,
+            "database_size_mb": db_size_mb
+        }
+
+        with open(self.manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=2)
+
+        print(f"\n[DuckDBCache SUCCESS] Target cache built successfully.")
+        print(f"  Artifacts:       {self.db_path} ({db_size_mb:.2f} MB)")
+        print(f"  Manifest:        {self.manifest_path}")
+        print(f"  Total Indexed:   {global_target_row_id:,} records")
+        print(f"  Build Duration:  {total_time:.2f}s")
+        return manifest_data
 
     def query_candidates_for_s1(
         self,
@@ -330,12 +429,14 @@ class DuckDBTargetIndexer:
         enable_country_fallback: bool = True
     ) -> Dict[str, List[Tuple[str, int, Dict[str, Any]]]]:
         """
-        Executes parallel multi-pass candidate queries against the disk index.
+        Executes parallel multi-pass candidate queries against the persistent disk cache.
         Returns:
             Dict[s1_id, List[(target_id, provenance_mask, target_record_dict)]]
         """
         if len(s1_df) == 0:
             return {}
+
+        self._init_connection()
 
         temp_s1_parquet = os.path.join(self.tmp_dir, f"temp_s1_{os.getpid()}_{int(time.time()*1000)%100000}.parquet").replace("\\", "/")
         temp_s1_tok_parquet = os.path.join(self.tmp_dir, f"temp_s1_tok_{os.getpid()}_{int(time.time()*1000)%100000}.parquet").replace("\\", "/")
@@ -489,7 +590,6 @@ class DuckDBTargetIndexer:
         if os.path.exists(temp_s1_tok_parquet):
             os.remove(temp_s1_tok_parquet)
 
-        # Structure results into dictionary
         result: Dict[str, List[Tuple[str, int, Dict[str, Any]]]] = {}
         for s1_id, tid, mask, t_name, t_cname, t_addr, t_ctry in rows:
             if s1_id not in result:
@@ -510,7 +610,7 @@ class DuckDBTargetIndexer:
         return result
 
     def close(self):
-        """Closes DuckDB database connection."""
+        """Closes DuckDB connection."""
         if self.conn is not None:
             self.conn.close()
             self.conn = None

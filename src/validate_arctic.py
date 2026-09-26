@@ -117,51 +117,33 @@ def run_arctic_validation(
         matches = [x.strip() for x in m_str.split(",") if x.strip()]
         gt_mapping[s1_id] = matches
 
-    # 3. Load Targets and Pre-Index
-    print("\n[2/5] Pre-indexing Target Sources (S2 + S3)...")
+    # 3. Connect to Persistent DuckDB Target Cache (0 MB in RAM, 100% on disk)
+    print("\n[2/5] Connecting to Persistent DuckDB Target Cache...")
     t0 = time.time()
-    s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-")
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
+    from src.duckdb_indexer import DuckDBTargetIndexer
+    indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
+    expected_sources = [config.train_s2_path, config.train_s3_path]
+    manifest = indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
+    print(f"Target cache verified ready ({manifest.get('total_rows', 0):,} records) in {time.time() - t0:.2f}s.")
 
-    s2_p = add_v2_blocking_columns(s2_df)
-    s3_p = add_v2_blocking_columns(s3_df)
-    del s2_df, s3_df
+    # 4. Generate Multi-Pass Deterministic Candidates via DuckDB
+    print("\n[3/5] Generating Multi-Pass Candidates via DuckDB...")
+    t_q0 = time.time()
+    cands_result = indexer.query_candidates_for_s1(s1_val_df, max_cands_per_s1=40)
+    print(f"Candidate query complete for {len(s1_val_df):,} S1 rows in {time.time() - t_q0:.2f}s.")
+
+    deterministic_cands: Dict[str, List[str]] = {}
+    target_records: Dict[str, Dict[str, Any]] = {}
+    for s1_id, cand_tuples in cands_result.items():
+        c_ids = []
+        for tid, mask, t_rec in cand_tuples:
+            c_ids.append(tid)
+            if tid not in target_records:
+                target_records[tid] = t_rec
+        deterministic_cands[s1_id] = c_ids
+
+    del cands_result
     gc.collect()
-
-    target_p = pl.concat([s2_p, s3_p])
-    del s2_p, s3_p
-    gc.collect()
-
-    target_index = build_compact_target_index(target_p)
-    print(f"Pre-indexed {len(target_p):,} Target entities in {time.time() - t0:.2f}s.")
-
-    # 4. Generate Deterministic Candidates
-    print("\n[3/5] Generating Multi-Pass Deterministic Candidates...")
-    deterministic_cands = generate_candidates_against_indexed_target(s1_val_p, target_index, max_cands_per_s1=40)
-
-    # 5. Initialize Arctic Embedder & Embeddings
-    print("\n[4/5] Initializing Arctic Embeddings...")
-    embedder = ArcticEmbedder(num_threads=2)
-    
-    # Compute or retrieve validation S1 embeddings
-    s1_val_ids_list = list(s1_records.keys())
-    s1_texts = [
-        format_entity_text(s1_records[sid]["norm_name"], s1_records[sid]["norm_addr"], s1_records[sid].get("country", ""))
-        for sid in s1_val_ids_list
-    ]
-    t0_emb = time.time()
-    s1_embeddings = embedder.encode(s1_texts, batch_size=128, normalize_embeddings=True)
-    emb_time_s1 = time.time() - t0_emb
-    throughput_emb = len(s1_texts) / emb_time_s1 if emb_time_s1 > 0 else 0
-    print(f"Encoded {len(s1_texts):,} S1 validation entities in {emb_time_s1:.2f}s ({throughput_emb:.1f} ent/sec).")
-
-    # Extract target pool for active deterministic candidates + semantic search sample
-    needed_target_ids: Set[str] = set()
-    for c_list in deterministic_cands.values():
-        needed_target_ids.update(c_list)
-
-    active_target_p = target_p.filter(pl.col("eid").is_in(list(needed_target_ids)))
-    target_records = extract_record_dict_from_df(active_target_p)
     
     # Target embeddings for active candidates
     target_ids_list = list(target_records.keys())

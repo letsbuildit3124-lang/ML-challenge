@@ -78,16 +78,14 @@ def run_v3_validation(s1_eval_count: int = 2500):
         matches = [x.strip() for x in m_str.split(",") if x.strip()]
         gt_mapping[s1_id] = matches
 
-    # 3. Disk-Backed DuckDB Target Index (0 MB in RAM, 100% on disk)
-    print("\n[2/4] Initializing Disk-Backed DuckDB Target Index...", flush=True)
+    # 3. Connect to Persistent DuckDB Target Cache (0 MB in RAM, 100% on disk)
+    print("\n[2/4] Connecting to Persistent DuckDB Target Cache...", flush=True)
     t0 = time.time()
     from src.duckdb_indexer import DuckDBTargetIndexer
     indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
-    total_indexed = indexer.build_index_from_sources(
-        [("Train S2", config.train_s2_path, "S2-"), ("Train S3", config.train_s3_path, "S3-")],
-        chunk_size=100000
-    )
-    print(f"Target index ready ({total_indexed:,} records) in {time.time() - t0:.2f}s.", flush=True)
+    expected_sources = [config.train_s2_path, config.train_s3_path]
+    manifest = indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
+    print(f"Target cache verified ready ({manifest.get('total_rows', 0):,} records) in {time.time() - t0:.2f}s.", flush=True)
 
     # 4. Generate Candidates & Extract active Target records via DuckDB
     print("\n[3/4] Querying Candidates for Validation Entities via DuckDB...", flush=True)
