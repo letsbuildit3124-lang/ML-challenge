@@ -76,14 +76,33 @@ def compute_soundex(token: str) -> str:
 def add_v2_blocking_columns(df: pl.DataFrame) -> pl.DataFrame:
     """
     Computes all V3 vectorized attributes and retains ONLY essential columns to save 70% RAM.
+    Idempotent: Reuses existing normalized/blocking columns if already present.
     """
+    if "eid" in df.columns and "compact_name" in df.columns and "cname8_num" in df.columns:
+        return df
+
+    cols = {c.lower(): c for c in df.columns}
+    id_col = cols.get("entity_id") or cols.get("eid") or cols.get("record_id") or df.columns[0]
+    name_col = cols.get("business_name") or cols.get("norm_name") or cols.get("name") or df.columns[1]
+    addr_col = cols.get("business_address") or cols.get("norm_addr") or cols.get("address") or (df.columns[2] if len(df.columns) > 2 else None)
+    ctry_col = cols.get("country")
+
     # 1. Base Normalization
-    df_p = df.with_columns([
-        pl.col("entity_id").alias("eid"),
-        pl.col("business_name").fill_null("").str.to_lowercase().str.replace_all(r"[^\w\s]", " ").str.replace_all(r"\s+", " ").str.strip_chars().alias("norm_name"),
-        pl.col("business_address").fill_null("").str.to_lowercase().str.replace_all(r"[^\w\s]", " ").str.replace_all(r"\s+", " ").str.strip_chars().alias("norm_addr"),
-        pl.col("country").fill_null("").str.to_uppercase().str.strip_chars().alias("country"),
-    ])
+    cols_to_add = [
+        pl.col(id_col).cast(pl.Utf8).alias("eid"),
+        pl.col(name_col).fill_null("").str.to_lowercase().str.replace_all(r"[^\w\s]", " ").str.replace_all(r"\s+", " ").str.strip_chars().alias("norm_name"),
+    ]
+    if addr_col:
+        cols_to_add.append(pl.col(addr_col).fill_null("").str.to_lowercase().str.replace_all(r"[^\w\s]", " ").str.replace_all(r"\s+", " ").str.strip_chars().alias("norm_addr"))
+    else:
+        cols_to_add.append(pl.lit("").alias("norm_addr"))
+
+    if ctry_col:
+        cols_to_add.append(pl.col(ctry_col).fill_null("").str.to_uppercase().str.strip_chars().alias("country"))
+    else:
+        cols_to_add.append(pl.lit("").alias("country"))
+
+    df_p = df.with_columns(cols_to_add)
 
     # 2. Bidirectional Transliteration
     def translit_single(val: Optional[str]) -> str:
