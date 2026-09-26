@@ -73,10 +73,10 @@ def generate_v5_submission(
     ext = ".json" if selected_model_type == "xgboost" else ".txt"
     if model_path is None or not os.path.exists(model_path):
         candidates = [
-            os.path.join(config.models_dir, "final", f"final_model{ext}"),
-            os.path.join(config.models_dir, selected_model_type, f"model{ext}"),
-            os.path.join(config.models_dir, f"model{ext}"),
-            config.model_save_path
+            os.path.join(config.models_dir, "final", "final_model.json"),
+            os.path.join(config.models_dir, "final", "final_model.txt"),
+            os.path.join(config.models_dir, selected_model_type, "model.json"),
+            os.path.join(config.models_dir, selected_model_type, "model.txt"),
         ]
         for p in candidates:
             if os.path.exists(p):

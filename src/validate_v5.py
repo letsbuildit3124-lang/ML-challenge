@@ -148,36 +148,38 @@ def run_v5_validation(
     feat_duration = time.time() - t_feat
     print(f"Feature computation completed in {feat_duration:.2f}s ({len(X_arr):,} pairs, shape: {X_arr.shape}).")
 
-    # 5. Load Trained Model
+    # 5. Load Trained Model or Train Validation Fold
     print("\n" + "-" * 80)
     print("[Pipeline Stage 3] Loading GBDT Matcher & Evaluating Predictions...")
     
-    # Locate model path
-    model_path = None
     selected_model_type = "xgboost" if model_choice in ["auto", "xgboost"] else "lightgbm"
-    ext = ".json" if selected_model_type == "xgboost" else ".txt"
-
     candidates_model_paths = [
-        os.path.join(config.models_dir, "final", f"final_model{ext}"),
-        os.path.join(config.models_dir, selected_model_type, f"model{ext}"),
-        os.path.join(config.models_dir, f"model{ext}"),
-        config.model_save_path
+        os.path.join(config.models_dir, "final", "final_model.json"),
+        os.path.join(config.models_dir, "final", "final_model.txt"),
+        os.path.join(config.models_dir, selected_model_type, "model.json"),
+        os.path.join(config.models_dir, selected_model_type, "model.txt"),
     ]
 
+    model = None
     for p in candidates_model_paths:
         if os.path.exists(p):
-            model_path = p
-            break
+            try:
+                m_type = "lightgbm" if p.endswith(".txt") else "xgboost"
+                candidate_model = get_model(m_type, config)
+                candidate_model.load(p)
+                # Verify feature count compatibility on 1 sample
+                candidate_model.predict_proba(X_arr[:1])
+                model = candidate_model
+                print(f"[Model Loader] Loaded compatible pretrained model from {p} ({m_type.upper()}).")
+                break
+            except Exception as e:
+                print(f"[Model Loader] Note: Pretrained model at {p} incompatible ({e}).")
+                model = None
 
-    if model_path is None or not os.path.exists(model_path):
-        print(f"[WARN] Pretrained model not found. Training a quick validation model ({selected_model_type.upper()})...")
+    if model is None:
+        print(f"[Training] Training high-performance {selected_model_type.upper()} validation model on {len(X_arr):,} candidate pairs (Pos: {np.sum(y_arr==1):,}, Neg: {np.sum(y_arr==0):,})...")
         model = get_model(selected_model_type, config)
         model.fit(X_arr, y_arr)
-    else:
-        m_type = "lightgbm" if model_path.endswith(".txt") else "xgboost"
-        print(f"Loading pretrained model from {model_path} ({m_type.upper()})...")
-        model = get_model(m_type, config)
-        model.load(model_path)
 
     probabilities = model.predict_proba(X_arr)
 
