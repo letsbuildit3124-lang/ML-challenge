@@ -17,22 +17,18 @@ import numpy as np
 DEFAULT_MODEL_NAME = "themelder/arctic-embed-xs-entity-resolution"
 EMBEDDING_DIM = 384
 
-def format_entity_text(name: Optional[str], address: Optional[str], country: Optional[str] = "") -> str:
+def format_entity_text(name: Optional[str], address: Optional[str] = "", country: Optional[str] = "") -> str:
     """
     Formats business entity fields into canonical string for Arctic ER model.
-    Format: '<name> | <address> | <country>'
+    Format:
+    Business name: {business_name}
+    Address: {business_address}
+    Country: {country}
     """
-    parts = []
-    if name and str(name).strip():
-        parts.append(str(name).strip())
-    if address and str(address).strip():
-        parts.append(str(address).strip())
-    if country and str(country).strip():
-        parts.append(str(country).strip())
-    
-    if not parts:
-        return "unknown entity"
-    return " | ".join(parts)
+    bname = str(name).strip() if name and str(name).strip() else "unknown"
+    baddr = str(address).strip() if address and str(address).strip() else "unknown"
+    bctry = str(country).strip() if country and str(country).strip() else "unknown"
+    return f"Business name: {bname}\nAddress: {baddr}\nCountry: {bctry}"
 
 
 class ArcticEmbedder:
