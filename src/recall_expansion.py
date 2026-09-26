@@ -27,6 +27,8 @@ from collections import defaultdict, Counter
 import polars as pl
 import numpy as np
 
+from rapidfuzz import fuzz, process
+
 from src.config import get_config
 from src.data_loader import load_source_file, load_ground_truth
 from src.duckdb_indexer import DuckDBTargetIndexer
@@ -107,19 +109,19 @@ def run_recall_expansion(s1_count: int = 1000, candidate_budget: int = 250):
     # Compound Keys
     s1_p = s1_p.with_columns([
         # cname_p3 + addr_num
-        pl.when(pl.col("cname_p3").str.len_chars() >= 3 & pl.col("first_addr_num").is_not_null()).then(
+        pl.when((pl.col("cname_p3").str.len_chars() >= 3) & (pl.col("first_addr_num").is_not_null())).then(
             pl.concat_str([pl.col("cname_p3"), pl.lit("_"), pl.col("first_addr_num")])
         ).otherwise(None).alias("cname_p3_num"),
         # cname_p4 + addr_num
-        pl.when(pl.col("cname_p4").str.len_chars() >= 4 & pl.col("first_addr_num").is_not_null()).then(
+        pl.when((pl.col("cname_p4").str.len_chars() >= 4) & (pl.col("first_addr_num").is_not_null())).then(
             pl.concat_str([pl.col("cname_p4"), pl.lit("_"), pl.col("first_addr_num")])
         ).otherwise(None).alias("cname_p4_num"),
         # addr_num + street_p4
-        pl.when(pl.col("first_addr_num").is_not_null() & pl.col("street_p4").is_not_null()).then(
+        pl.when((pl.col("first_addr_num").is_not_null()) & (pl.col("street_p4").is_not_null())).then(
             pl.concat_str([pl.col("first_addr_num"), pl.lit("_"), pl.col("street_p4")])
         ).otherwise(None).alias("addr_num_street"),
         # postal + addr_num
-        pl.when(pl.col("postal_code").is_not_null() & pl.col("first_addr_num").is_not_null()).then(
+        pl.when((pl.col("postal_code").is_not_null()) & (pl.col("first_addr_num").is_not_null())).then(
             pl.concat_str([pl.col("postal_code"), pl.lit("_"), pl.col("first_addr_num")])
         ).otherwise(None).alias("postal_addr_num"),
     ])
