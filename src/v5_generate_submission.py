@@ -24,6 +24,7 @@ import polars as pl
 from src.config import Config, get_config
 from src.data_loader import iter_source_file_chunks, load_source_file
 from src.dataset_builder import extract_record_dict_from_df
+from src.blocking_v2 import add_v2_blocking_columns
 from src.rapidfuzz_features import compute_tiered_pairwise_features
 from src.model import LightGBMERModel, XGBoostERModel, get_model
 from src.resource_tracker import get_current_rss_mb, get_peak_rss_mb, MemoryTracker
@@ -120,10 +121,11 @@ def generate_v5_submission(
 
     for chunk_df in iter_source_file_chunks(config.test_s1_path, chunk_size=s1_chunk_size, expected_prefix="S1-"):
         n_chunk = len(chunk_df)
-        s1_records = extract_record_dict_from_df(chunk_df)
+        s1_chunk_p = add_v2_blocking_columns(chunk_df)
+        s1_records = extract_record_dict_from_df(s1_chunk_p)
 
         cands_raw = engine.generate_candidates(
-            chunk_df,
+            s1_chunk_p,
             enable_deterministic=True,
             enable_ngram=True,
             enable_token=True,

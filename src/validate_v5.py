@@ -80,7 +80,8 @@ def run_v5_validation(
     del s1_full_df
     gc.collect()
 
-    s1_records = extract_record_dict_from_df(s1_val_df)
+    s1_val_p = add_v2_blocking_columns(s1_val_df)
+    s1_records = extract_record_dict_from_df(s1_val_p)
     print(f"Extracted {len(s1_records):,} S1 validation records in {time.time() - t0:.2f}s.")
 
     # 3. Candidate Generation via V5 Retrieval Engine
@@ -92,7 +93,7 @@ def run_v5_validation(
 
     t_ret = time.time()
     cands_raw = engine.generate_candidates(
-        s1_val_df,
+        s1_val_p,
         enable_deterministic=True,
         enable_ngram=True,
         enable_token=True,
