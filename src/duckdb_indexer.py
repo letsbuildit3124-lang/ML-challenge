@@ -6,7 +6,7 @@ Key Architectural Principles:
 2. Cache is persisted in `cache/entity_resolution.duckdb` and tracked by `cache/entity_resolution_cache.json`.
 3. All candidate-generation, recall experiments, Arctic, and ML training scripts REUSE the existing target cache.
 4. Experiments do NOT rebuild or re-ingest target data unless explicitly invoked with `--force-rebuild`.
-5. Peak RAM is strictly bounded at < 1.5GB via chunked streaming and DuckDB disk storage.
+5. Peak RAM is strictly bounded at < 500MB via chunked streaming, temporary tables, and DuckDB columnar engine.
 """
 
 import os
@@ -26,8 +26,8 @@ from src.blocking_v2 import add_v2_blocking_columns, CORP_STOPWORDS
 DEFAULT_DB_PATH = "cache/entity_resolution.duckdb"
 DEFAULT_MANIFEST_PATH = "cache/entity_resolution_cache.json"
 DEFAULT_TMP_DIR = "cache/duckdb_tmp"
-CACHE_VERSION = "v3.1_multilingual_ensemble"
-SCHEMA_VERSION = "3.1"
+CACHE_VERSION = "v3.2_streamlined_columnar"
+SCHEMA_VERSION = "3.2"
 NORMALIZATION_VERSION = "v3_boundary_aware_translit"
 
 INFORMATIVE_TOKEN_STOPWORDS = set(CORP_STOPWORDS) | {
@@ -37,18 +37,18 @@ INFORMATIVE_TOKEN_STOPWORDS = set(CORP_STOPWORDS) | {
     "ste", "apt", "unit", "block", "sector", "plot", "house", "room"
 }
 
-AVAILABLE_INDEXES = [
-    "idx_compact_name",
-    "idx_translit_cname",
-    "idx_norm_name",
-    "idx_cname_p6",
-    "idx_tokens",
-    "idx_soundex_num",
-    "idx_cname8_num",
-    "idx_f2_num",
-    "idx_pin_cname4",
-    "idx_addr_street",
-    "idx_fallback_exact"
+AVAILABLE_BLOCKERS = [
+    "blocker_compact_name",
+    "blocker_translit_cname",
+    "blocker_norm_name",
+    "blocker_soundex_num",
+    "blocker_cname8_num",
+    "blocker_f2_num",
+    "blocker_pin_cname4",
+    "blocker_cname_p6",
+    "blocker_addr_street",
+    "blocker_tokens",
+    "blocker_fallback_exact"
 ]
 
 def compute_files_fingerprint(paths: List[str]) -> str:
@@ -93,10 +93,12 @@ class DuckDBTargetIndexer:
             self.conn = duckdb.connect(self.db_path)
             self.conn.execute(f"SET memory_limit='{self.memory_limit}';")
             self.conn.execute(f"SET threads={self.threads};")
+            self.conn.execute("SET preserve_insertion_order=false;")
             self.conn.execute(f"SET temp_directory='{self.tmp_dir.replace(chr(92), '/')}';")
+            self.conn.execute("PRAGMA wal_autocheckpoint='50MB';")
 
     def _init_tables(self):
-        """Creates target primary table and index tables."""
+        """Creates target primary table and token inverted table."""
         self._init_connection()
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS targets (
@@ -116,17 +118,11 @@ class DuckDBTargetIndexer:
                 addr_street VARCHAR
             );
 
-            CREATE TABLE IF NOT EXISTS idx_compact_name (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_translit_cname (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_norm_name (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_cname_p6 (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_tokens (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_soundex_num (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_cname8_num (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_f2_num (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_pin_cname4 (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_addr_street (block_key VARCHAR, country VARCHAR, target_row_id BIGINT);
-            CREATE TABLE IF NOT EXISTS idx_fallback_exact (block_key VARCHAR, target_row_id BIGINT);
+            CREATE TABLE IF NOT EXISTS target_tokens (
+                token VARCHAR,
+                country VARCHAR,
+                target_row_id BIGINT
+            );
         """)
 
     def validate_cache(self, expected_source_paths: Optional[List[str]] = None) -> Tuple[bool, str, Dict[str, Any]]:
@@ -172,7 +168,7 @@ class DuckDBTargetIndexer:
             print(f"  S2 Records:      {manifest.get('source2_rows', 0):,}")
             print(f"  S3 Records:      {manifest.get('source3_rows', 0):,}")
             print(f"  Total Targets:   {manifest.get('total_rows', 0):,}")
-            print(f"  Indexes Ready:   {len(manifest.get('available_indexes', []))} indexes ({', '.join(manifest.get('available_indexes', [])[:4])}...)")
+            print(f"  Blockers Ready:  {len(manifest.get('available_blockers', []))} blockers ({', '.join(manifest.get('available_blockers', [])[:4])}...)")
             self._init_connection()
             return manifest
         else:
@@ -204,7 +200,7 @@ class DuckDBTargetIndexer:
             return manifest
 
         print(f"\n" + "=" * 80)
-        print(f"[DuckDBCache] BUILDING PERSISTENT TARGET CACHE")
+        print(f"[DuckDBCache] BUILDING PERSISTENT TARGET CACHE (STREAMLINED COLUMNAR)")
         print(f"Target Database: {self.db_path}")
         print(f"Chunk Size:      {chunk_size:,} rows | Force Rebuild: {force_rebuild}")
         print(f"=" * 80)
@@ -227,6 +223,8 @@ class DuckDBTargetIndexer:
         src_counts = {}
         temp_chunk_parquet = os.path.join(self.tmp_dir, "temp_target_ingest.parquet").replace("\\", "/")
         temp_tokens_parquet = os.path.join(self.tmp_dir, "temp_tokens_ingest.parquet").replace("\\", "/")
+
+        chunk_counter = 0
 
         for src_name, path, prefix in source_paths:
             print(f"\n[DuckDBCache] Ingesting {src_name} ({path})...", flush=True)
@@ -268,16 +266,13 @@ class DuckDBTargetIndexer:
                     if col not in chunk_p.columns:
                         chunk_p = chunk_p.with_columns(pl.lit(None).cast(pl.String).alias(col))
 
-                # Explode informative tokens for inverted token index
-                def extract_tokens_list(text_series: pl.Series) -> pl.Series:
-                    return text_series.fill_null("").str.split(" ")
-
+                # Explode informative tokens for inverted token table
                 tokens_df = chunk_p.select(["target_row_id", "country", "norm_name"]).with_columns(
-                    extract_tokens_list(pl.col("norm_name")).alias("token")
+                    pl.col("norm_name").fill_null("").str.split(" ").alias("token")
                 ).explode("token").filter(
                     pl.col("token").str.len_chars() >= 3 & (~pl.col("token").is_in(list(INFORMATIVE_TOKEN_STOPWORDS)))
                 ).select([
-                    pl.col("token").alias("block_key"),
+                    pl.col("token"),
                     pl.col("country"),
                     pl.col("target_row_id")
                 ])
@@ -287,7 +282,7 @@ class DuckDBTargetIndexer:
                 del chunk_p, tokens_df
                 gc.collect()
 
-                # Batch SQL Ingestion into Primary Table
+                # Ingestion into targets table
                 self.conn.execute(f"""
                     INSERT INTO targets
                     SELECT 
@@ -297,66 +292,11 @@ class DuckDBTargetIndexer:
                     FROM read_parquet('{temp_chunk_parquet}');
                 """)
 
-                # Populate Individual High-Recall Indexes
+                # Ingestion into target_tokens table
                 self.conn.execute(f"""
-                    INSERT INTO idx_compact_name
-                    SELECT compact_name AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE compact_name IS NOT NULL AND LENGTH(compact_name) >= 3;
-
-                    INSERT INTO idx_translit_cname
-                    SELECT translit_cname AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE translit_cname IS NOT NULL AND LENGTH(translit_cname) >= 4;
-
-                    INSERT INTO idx_norm_name
-                    SELECT norm_name AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE norm_name IS NOT NULL AND LENGTH(norm_name) >= 4;
-
-                    INSERT INTO idx_cname_p6
-                    SELECT cname_p6 AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE cname_p6 IS NOT NULL;
-
-                    INSERT INTO idx_tokens
-                    SELECT block_key, country, target_row_id
+                    INSERT INTO target_tokens
+                    SELECT token, country, target_row_id
                     FROM read_parquet('{temp_tokens_parquet}');
-
-                    INSERT INTO idx_soundex_num
-                    SELECT soundex_num AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE soundex_num IS NOT NULL;
-
-                    INSERT INTO idx_cname8_num
-                    SELECT cname8_num AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE cname8_num IS NOT NULL;
-
-                    INSERT INTO idx_cname8_num
-                    SELECT translit_cname8_num AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE translit_cname8_num IS NOT NULL;
-
-                    INSERT INTO idx_f2_num
-                    SELECT f2_num AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE f2_num IS NOT NULL;
-
-                    INSERT INTO idx_pin_cname4
-                    SELECT pin_cname4 AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE pin_cname4 IS NOT NULL;
-
-                    INSERT INTO idx_addr_street
-                    SELECT addr_street AS block_key, country, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE addr_street IS NOT NULL;
-
-                    INSERT INTO idx_fallback_exact
-                    SELECT compact_name AS block_key, target_row_id
-                    FROM read_parquet('{temp_chunk_parquet}')
-                    WHERE compact_name IS NOT NULL AND LENGTH(compact_name) >= 5;
                 """)
 
                 if os.path.exists(temp_chunk_parquet):
@@ -366,30 +306,23 @@ class DuckDBTargetIndexer:
 
                 global_target_row_id += n_rows
                 src_processed += n_rows
-                
+                chunk_counter += 1
+
+                # Periodic checkpointing to release write buffers
+                if chunk_counter % 5 == 0:
+                    self.conn.execute("CHECKPOINT;")
+
                 pct_str = f"({src_processed:,})" if not limit_per_file else f"({src_processed:,}/{limit_per_file:,})"
                 speed = src_processed / (time.time() - t_src)
                 print(f"  -> Ingested {pct_str} records into DuckDB | Rate: {speed:,.0f} rows/s", flush=True)
 
             src_counts[src_name] = src_processed
 
-        # Build disk ART indexes
-        print("\n[DuckDBCache] Building disk-backed ART indexes...", flush=True)
-        t_idx_start = time.time()
-        self.conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_art_cn ON idx_compact_name (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_tcn ON idx_translit_cname (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_nn ON idx_norm_name (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_p6 ON idx_cname_p6 (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_tok ON idx_tokens (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_snd ON idx_soundex_num (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_c8 ON idx_cname8_num (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_f2 ON idx_f2_num (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_pin ON idx_pin_cname4 (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_str ON idx_addr_street (block_key, country);
-            CREATE INDEX IF NOT EXISTS idx_art_fb ON idx_fallback_exact (block_key);
-        """)
-        print(f"[DuckDBCache] ART indexes created in {time.time() - t_idx_start:.2f}s.", flush=True)
+        # Final checkpoint to persist and compress database
+        print("\n[DuckDBCache] Finalizing and checkpointing database to disk...", flush=True)
+        t_chk = time.time()
+        self.conn.execute("CHECKPOINT;")
+        print(f"[DuckDBCache] Checkpoint complete in {time.time() - t_chk:.2f}s.", flush=True)
 
         total_time = time.time() - t0
         db_size_mb = os.path.getsize(self.db_path) / (1024 * 1024) if os.path.exists(self.db_path) else 0
@@ -406,7 +339,7 @@ class DuckDBTargetIndexer:
             "source3_rows": src_counts.get("Train S3", 0),
             "total_rows": global_target_row_id,
             "target_data_fingerprint": compute_files_fingerprint(file_paths),
-            "available_indexes": AVAILABLE_INDEXES,
+            "available_blockers": AVAILABLE_BLOCKERS,
             "build_duration_seconds": total_time,
             "database_size_mb": db_size_mb
         }
@@ -473,101 +406,122 @@ class DuckDBTargetIndexer:
         del s1_p
         gc.collect()
 
-        token_cte = f"""
-            c_tok AS (
-                SELECT s.s1_id, idx.target_row_id, 128 AS bitmask
-                FROM read_parquet('{temp_s1_tok_parquet}') s
-                JOIN idx_tokens idx ON s.block_key = idx.block_key AND s.country = idx.country
-            ),
-        """ if enable_token_retrieval and os.path.exists(temp_s1_tok_parquet) else "c_tok AS (SELECT NULL AS s1_id, NULL AS target_row_id, 0 AS bitmask WHERE 1=0),"
+        # Temporary table for candidate hits
+        self.conn.execute("""
+            CREATE TEMP TABLE IF NOT EXISTS temp_candidate_hits (
+                s1_id VARCHAR,
+                target_row_id BIGINT,
+                bitmask INTEGER
+            );
+            DELETE FROM temp_candidate_hits;
+        """)
 
-        fallback_cte = f"""
-            c_fb AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 1024 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_fallback_exact idx ON s.compact_name = idx.block_key
-                WHERE s.compact_name IS NOT NULL AND LENGTH(s.compact_name) >= 5
-            ),
-        """ if enable_country_fallback else "c_fb AS (SELECT NULL AS s1_id, NULL AS target_row_id, 0 AS bitmask WHERE 1=0),"
+        # Execute blocker passes sequentially into temp table to keep RAM < 100MB
+        passes = [
+            # 1. Exact Compact Name (bitmask: 1)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 1
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.compact_name = t.compact_name AND s.country = t.country
+            WHERE s.compact_name IS NOT NULL AND LENGTH(s.compact_name) >= 3;
+            """,
+            # 2. Transliterated Compact Name (bitmask: 2)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 2
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.translit_cname = t.translit_cname AND s.country = t.country
+            WHERE s.translit_cname IS NOT NULL AND LENGTH(s.translit_cname) >= 4;
+            """,
+            # 3. Exact Normalized Name (bitmask: 4)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 4
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.norm_name = t.norm_name AND s.country = t.country
+            WHERE s.norm_name IS NOT NULL AND LENGTH(s.norm_name) >= 4;
+            """,
+            # 4. Phonetic Soundex + Address Num (bitmask: 8)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 8
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.soundex_num = t.soundex_num AND s.country = t.country
+            WHERE s.soundex_num IS NOT NULL;
+            """,
+            # 5. Cname8 + Address Num (bitmask: 16)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 16
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON (s.cname8_num = t.cname8_num OR s.translit_cname8_num = t.translit_cname8_num OR s.cname8_num = t.translit_cname8_num OR s.translit_cname8_num = t.cname8_num) AND s.country = t.country
+            WHERE s.cname8_num IS NOT NULL OR s.translit_cname8_num IS NOT NULL;
+            """,
+            # 6. First 2 Words + Address Num (bitmask: 32)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 32
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.f2_num = t.f2_num AND s.country = t.country
+            WHERE s.f2_num IS NOT NULL;
+            """,
+            # 7. Postal + Name Prefix-4 (bitmask: 64)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 64
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.pin_cname4 = t.pin_cname4 AND s.country = t.country
+            WHERE s.pin_cname4 IS NOT NULL;
+            """,
+            # 8. Compact Name Prefix-6 (bitmask: 256)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 256
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.cname_p6 = t.cname_p6 AND s.country = t.country
+            WHERE s.cname_p6 IS NOT NULL;
+            """,
+            # 9. Address Number + Street Token (bitmask: 512)
+            f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 512
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.addr_street = t.addr_street AND s.country = t.country
+            WHERE s.addr_street IS NOT NULL;
+            """
+        ]
 
-        query = f"""
-            WITH c_cn AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 1 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_compact_name idx ON s.compact_name = idx.block_key AND s.country = idx.country
-                WHERE s.compact_name IS NOT NULL AND LENGTH(s.compact_name) >= 3
-            ),
-            c_tcn AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 2 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_translit_cname idx ON s.translit_cname = idx.block_key AND s.country = idx.country
-                WHERE s.translit_cname IS NOT NULL AND LENGTH(s.translit_cname) >= 4
-            ),
-            c_nn AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 4 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_norm_name idx ON s.norm_name = idx.block_key AND s.country = idx.country
-                WHERE s.norm_name IS NOT NULL AND LENGTH(s.norm_name) >= 4
-            ),
-            c_snd AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 8 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_soundex_num idx ON s.soundex_num = idx.block_key AND s.country = idx.country
-                WHERE s.soundex_num IS NOT NULL
-            ),
-            c_c8 AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 16 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_cname8_num idx ON (s.cname8_num = idx.block_key OR s.translit_cname8_num = idx.block_key) AND s.country = idx.country
-                WHERE s.cname8_num IS NOT NULL OR s.translit_cname8_num IS NOT NULL
-            ),
-            c_f2 AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 32 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_f2_num idx ON s.f2_num = idx.block_key AND s.country = idx.country
-                WHERE s.f2_num IS NOT NULL
-            ),
-            c_pin AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 64 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_pin_cname4 idx ON s.pin_cname4 = idx.block_key AND s.country = idx.country
-                WHERE s.pin_cname4 IS NOT NULL
-            ),
-            {token_cte}
-            c_p6 AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 256 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_cname_p6 idx ON s.cname_p6 = idx.block_key AND s.country = idx.country
-                WHERE s.cname_p6 IS NOT NULL
-            ),
-            c_str AS (
-                SELECT s.eid AS s1_id, idx.target_row_id, 512 AS bitmask
-                FROM read_parquet('{temp_s1_parquet}') s
-                JOIN idx_addr_street idx ON s.addr_street = idx.block_key AND s.country = idx.country
-                WHERE s.addr_street IS NOT NULL
-            ),
-            {fallback_cte}
-            all_cands AS (
-                SELECT * FROM c_cn WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_tcn WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_nn WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_snd WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_c8 WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_f2 WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_pin WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_tok WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_p6 WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_str WHERE s1_id IS NOT NULL
-                UNION ALL SELECT * FROM c_fb WHERE s1_id IS NOT NULL
-            ),
-            merged_cands AS (
+        if enable_token_retrieval and os.path.exists(temp_s1_tok_parquet):
+            passes.append(f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.s1_id, tt.target_row_id, 128
+            FROM read_parquet('{temp_s1_tok_parquet}') s
+            JOIN target_tokens tt ON s.block_key = tt.token AND s.country = tt.country;
+            """)
+
+        if enable_country_fallback:
+            passes.append(f"""
+            INSERT INTO temp_candidate_hits
+            SELECT s.eid, t.target_row_id, 1024
+            FROM read_parquet('{temp_s1_parquet}') s
+            JOIN targets t ON s.compact_name = t.compact_name
+            WHERE s.compact_name IS NOT NULL AND LENGTH(s.compact_name) >= 5;
+            """)
+
+        for sql_pass in passes:
+            self.conn.execute(sql_pass)
+
+        # Merge, rank, and fetch details in a single aggregated query
+        final_query = f"""
+            WITH merged AS (
                 SELECT 
                     s1_id, 
                     target_row_id, 
                     BIT_OR(bitmask) AS prov_mask,
                     COUNT(*) AS match_votes,
                     ROW_NUMBER() OVER (PARTITION BY s1_id ORDER BY COUNT(*) DESC, BIT_OR(bitmask) DESC) AS rank_num
-                FROM all_cands
+                FROM temp_candidate_hits
                 GROUP BY s1_id, target_row_id
             )
             SELECT 
@@ -578,12 +532,13 @@ class DuckDBTargetIndexer:
                 t.compact_name,
                 t.norm_addr,
                 t.country
-            FROM merged_cands m
+            FROM merged m
             JOIN targets t ON m.target_row_id = t.target_row_id
             WHERE m.rank_num <= {max_cands_per_s1};
         """
 
-        rows = self.conn.execute(query).fetchall()
+        rows = self.conn.execute(final_query).fetchall()
+        self.conn.execute("DELETE FROM temp_candidate_hits;")
 
         if os.path.exists(temp_s1_parquet):
             os.remove(temp_s1_parquet)
@@ -614,3 +569,4 @@ class DuckDBTargetIndexer:
         if self.conn is not None:
             self.conn.close()
             self.conn = None
+

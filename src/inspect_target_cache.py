@@ -69,19 +69,15 @@ def main():
     print(f"Build Duration:       {manifest.get('build_duration_seconds', 0):.2f} seconds")
     print(f"Target Fingerprint:   {manifest.get('target_data_fingerprint', 'N/A')}")
     print("-" * 80)
-    print("Available High-Recall Indexes:")
-    for idx_name in manifest.get("available_indexes", []):
-        print(f"  [x] {idx_name}")
+    print("Available High-Recall Blockers:")
+    for b_name in manifest.get("available_blockers", manifest.get("available_indexes", [])):
+        print(f"  [x] {b_name}")
 
     print("-" * 80)
     print("Direct DuckDB Table Row Counts Verification:")
     try:
         conn = duckdb.connect(db_path, read_only=True)
-        tables = [
-            "targets", "idx_compact_name", "idx_translit_cname", "idx_norm_name",
-            "idx_cname_p6", "idx_tokens", "idx_soundex_num", "idx_cname8_num",
-            "idx_f2_num", "idx_pin_cname4", "idx_addr_street", "idx_fallback_exact"
-        ]
+        tables = ["targets", "target_tokens"]
         for tbl in tables:
             try:
                 count = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
