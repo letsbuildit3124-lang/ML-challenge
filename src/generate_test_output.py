@@ -127,11 +127,14 @@ def generate_test_output(
     del target_dfs
     gc.collect()
 
-    print("  Building in-memory compact hash index...", flush=True)
+    print("  Building in-memory compact hash index (vectorized Polars)...", flush=True)
+    t_hash = time.time()
     target_index = build_compact_target_index(full_target_p)
     total_targets_indexed = len(full_target_p)
+    print(f"  Built compact hash index in {time.time() - t_hash:.2f}s", flush=True)
 
     print("  Creating fast columnar string lookup arrays (RAM: ~600MB)...", flush=True)
+    t_arr = time.time()
     target_eids = full_target_p["eid"].to_list()
     target_names = full_target_p["norm_name"].to_list()
     target_cnames = full_target_p["compact_name"].to_list()
@@ -141,6 +144,7 @@ def generate_test_output(
     target_id_to_idx = {eid: idx for idx, eid in enumerate(target_eids)}
     del full_target_p
     gc.collect()
+    print(f"  Built columnar arrays in {time.time() - t_arr:.2f}s", flush=True)
 
     print(f"Indexed {total_targets_indexed:,} Test Targets in {time.time() - t0:.2f}s (Total RAM: ~1.2GB)", flush=True)
 
