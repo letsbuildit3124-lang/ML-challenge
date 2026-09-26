@@ -15,6 +15,7 @@ import time
 import argparse
 from typing import Dict, List, Set, Tuple, Any
 from collections import Counter
+import polars as pl
 from rapidfuzz.distance import Levenshtein, JaroWinkler
 
 from src.config import get_config

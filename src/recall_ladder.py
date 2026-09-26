@@ -75,7 +75,8 @@ def run_recall_ladder(
     # 2. Ensure DuckDB Target Cache is Ready (Persistent Cache)
     indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
     expected_sources = [config.train_s2_path, config.train_s3_path]
-    indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
+    manifest = indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
+    total_indexed = manifest.get("total_rows", 10320219)
 
     # 3. Load S1 records
     s1_full_df = load_source_file(config.train_s1_path, expected_prefix="S1-")

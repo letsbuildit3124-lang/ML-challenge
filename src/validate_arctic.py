@@ -145,6 +145,22 @@ def run_arctic_validation(
     del cands_result
     gc.collect()
     
+    # 5. Initialize Arctic Embedder & Embeddings
+    print("\n[4/5] Initializing Arctic Embeddings...")
+    embedder = ArcticEmbedder(num_threads=2)
+
+    # Compute or retrieve validation S1 embeddings
+    s1_val_ids_list = list(s1_records.keys())
+    s1_texts = [
+        format_entity_text(s1_records[sid]["norm_name"], s1_records[sid]["norm_addr"], s1_records[sid].get("country", ""))
+        for sid in s1_val_ids_list
+    ]
+    t0_emb = time.time()
+    s1_embeddings = embedder.encode(s1_texts, batch_size=128, normalize_embeddings=True)
+    emb_time_s1 = time.time() - t0_emb
+    throughput_emb = len(s1_texts) / emb_time_s1 if emb_time_s1 > 0 else 0
+    print(f"Encoded {len(s1_texts):,} S1 validation entities in {emb_time_s1:.2f}s ({throughput_emb:.1f} ent/sec).")
+
     # Target embeddings for active candidates
     target_ids_list = list(target_records.keys())
     target_texts = [
