@@ -19,6 +19,7 @@ from src.config import get_config
 from src.data_loader import load_source_file, load_ground_truth
 from src.dataset_builder import extract_record_dict_from_df
 from src.features import compute_pairwise_features
+from src.rapidfuzz_features import compute_tiered_pairwise_features
 from src.model import LightGBMERModel, XGBoostERModel, get_model
 from src.evaluation import evaluate_predictions, find_best_threshold
 from src.blocking_v2 import (
@@ -77,37 +78,40 @@ def run_v3_validation(s1_eval_count: int = 2500):
         matches = [x.strip() for x in m_str.split(",") if x.strip()]
         gt_mapping[s1_id] = matches
 
-    # 3. Load Targets and Pre-Index
-    print("\n[2/4] Pre-indexing Target Sources in memory...", flush=True)
+    # 3. Disk-Backed DuckDB Target Index (0 MB in RAM, 100% on disk)
+    print("\n[2/4] Initializing Disk-Backed DuckDB Target Index...", flush=True)
     t0 = time.time()
-    s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-")
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
+    from src.duckdb_indexer import DuckDBTargetIndexer
+    indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
+    total_indexed = indexer.build_index_from_sources(
+        [("Train S2", config.train_s2_path, "S2-"), ("Train S3", config.train_s3_path, "S3-")],
+        chunk_size=100000
+    )
+    print(f"Target index ready ({total_indexed:,} records) in {time.time() - t0:.2f}s.", flush=True)
 
-    s2_p = add_v2_blocking_columns(s2_df)
-    s3_p = add_v2_blocking_columns(s3_df)
-    del s2_df, s3_df
+    # 4. Generate Candidates & Extract active Target records via DuckDB
+    print("\n[3/4] Querying Candidates for Validation Entities via DuckDB...", flush=True)
+    t_q0 = time.time()
+    cands_result = indexer.query_candidates_for_s1(s1_val_df, max_cands_per_s1=40)
+    print(f"Candidate query complete for {len(s1_val_df):,} S1 rows in {time.time() - t_q0:.2f}s.", flush=True)
+
+    # Build active candidate lookup dicts
+    all_cands_dict: Dict[str, List[str]] = {}
+    target_records: Dict[str, Dict[str, Any]] = {}
+    provenance_map: Dict[Tuple[str, str], int] = {}
+
+    for s1_id, cand_tuples in cands_result.items():
+        c_ids = []
+        for tid, mask, t_rec in cand_tuples:
+            c_ids.append(tid)
+            provenance_map[(s1_id, tid)] = mask
+            if tid not in target_records:
+                target_records[tid] = t_rec
+        all_cands_dict[s1_id] = c_ids
+
+    del cands_result
     gc.collect()
-
-    target_p = pl.concat([s2_p, s3_p])
-    del s2_p, s3_p
-    gc.collect()
-
-    target_index = build_compact_target_index(target_p)
-    print(f"Pre-indexed {len(target_p):,} Target entities in {time.time() - t0:.2f}s (RAM: ~350MB)", flush=True)
-
-    # 4. Generate Candidates & Extract ONLY active Target records
-    print("\n[3/4] Generating Candidates for all Validation entities...", flush=True)
-    all_cands_dict = generate_candidates_against_indexed_target(s1_val_p, target_index, max_cands_per_s1=40)
-    
-    needed_target_ids: Set[str] = set()
-    for c_list in all_cands_dict.values():
-        needed_target_ids.update(c_list)
-
-    print(f"Extracted {len(needed_target_ids):,} active Target candidate records from table...", flush=True)
-    active_target_p = target_p.filter(pl.col("eid").is_in(list(needed_target_ids)))
-    target_records = extract_record_dict_from_df(active_target_p)
-    del target_p, active_target_p
-    gc.collect()
+    print(f"Extracted {len(target_records):,} active Target candidate records (<15MB RAM).", flush=True)
 
     # Load Baseline Model (XGBoost / LightGBM)
     final_m_path = os.path.join(config.models_dir, "final", "final_model.json")
@@ -151,13 +155,33 @@ def run_v3_validation(s1_eval_count: int = 2500):
             valid_c_list = []
             for tgt_id in c_list:
                 if s1_id in s1_records and tgt_id in target_records:
-                    f = compute_pairwise_features(s1_records[s1_id], target_records[tgt_id], tgt_id, fast_prune=True)
+                    prov_mask = provenance_map.get((s1_id, tgt_id), 1)
+                    f = compute_tiered_pairwise_features(s1_records[s1_id], target_records[tgt_id], tgt_id, provenance_mask=prov_mask)
                     if f is not None:
                         feats_list.append(f)
                         valid_c_list.append(tgt_id)
 
             if feats_list:
-                probs = model.predict_proba(np.array(feats_list, dtype=np.float32))
+                feats_arr = np.array(feats_list, dtype=np.float32)
+                expected_features = 35
+                if hasattr(model, "model") and model.model is not None:
+                    if hasattr(model.model, "num_feature"):
+                        try:
+                            expected_features = model.model.num_feature()
+                        except Exception:
+                            expected_features = 35
+                    elif hasattr(model.model, "n_features_in_"):
+                        expected_features = model.model.n_features_in_
+
+                if feats_arr.shape[1] > expected_features:
+                    model_input = feats_arr[:, :expected_features]
+                elif feats_arr.shape[1] < expected_features:
+                    pad = np.zeros((feats_arr.shape[0], expected_features - feats_arr.shape[1]), dtype=np.float32)
+                    model_input = np.hstack([feats_arr, pad])
+                else:
+                    model_input = feats_arr
+
+                probs = model.predict_proba(model_input)
                 val_cand_scores[s1_id] = list(zip(valid_c_list, probs))
 
         t_seed_eval = time.time() - t0_s
