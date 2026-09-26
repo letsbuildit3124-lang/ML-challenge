@@ -93,7 +93,15 @@ def run_dense_benchmark(s1_count: int = 1000, default_k: int = 50, candidate_bud
     print("=" * 80)
 
     # Pre-flight Check: Index Completeness Validation
-    ann_meta_path = os.path.join(config.base_dir, "cache", "ann", "arctic", "metadata.json")
+    ann_dir = "cache/ann/arctic"
+    ann_meta_path = os.path.join(config.base_dir, ann_dir, "metadata.json")
+    smoke_meta_path = os.path.join(config.base_dir, ann_dir, "smoke", "metadata.json")
+
+    # If allow_incomplete is passed and smoke index exists, use smoke directory
+    if allow_incomplete and os.path.exists(smoke_meta_path) and not os.path.exists(ann_meta_path):
+        ann_meta_path = smoke_meta_path
+        ann_dir = "cache/ann/arctic/smoke"
+
     if os.path.exists(ann_meta_path):
         with open(ann_meta_path, "r", encoding="utf-8") as f:
             ann_meta = json.load(f)
@@ -107,11 +115,19 @@ def run_dense_benchmark(s1_count: int = 1000, default_k: int = 50, candidate_bud
             print(f"  Indexed Targets:  {t_count:,} / {expected:,}")
             print(f"  Complete Universe: {is_complete}")
             print("\nDense retrieval results on a partial target subset are INVALID for measuring candidate recall.")
-            print("Please build the complete target embeddings first:")
-            print("  PYTHONPATH=. python3 -m src.build_arctic_embeddings --full")
-            print("  PYTHONPATH=. python3 -m src.build_arctic_faiss")
-            print("\n(To bypass this safety check strictly for testing, pass '--allow-incomplete').")
+            print("Please assemble the complete 10,320,219 target embeddings and build the production FAISS index:")
+            print("  PYTHONPATH=. python3 -m src.arctic_pipeline --gpu")
+            print("\n(To bypass this safety check strictly for development smoke tests, pass '--allow-incomplete').")
             print("!" * 80 + "\n")
+            sys.exit(1)
+
+        print("-" * 80)
+        print(f"Target vectors indexed:  {t_count:,} / {expected:,}")
+        print(f"Complete universe index: {'YES' if is_complete else 'NO (SMOKE / DEV SUBSET)'}")
+        print("-" * 80)
+    else:
+        if not allow_incomplete:
+            print(f"\n[ERROR] Arctic ANN Index metadata not found at {ann_meta_path}!")
             sys.exit(1)
 
     # 1. Load Ground Truth and Validation S1 Sample

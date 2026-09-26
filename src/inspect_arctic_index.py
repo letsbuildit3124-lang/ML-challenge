@@ -19,11 +19,10 @@ from src.arctic_embeddings import EMBEDDING_DIM, DEFAULT_MODEL_NAME
 
 EXPECTED_TARGET_COUNT = 10320219
 
-def inspect_arctic_index():
-    config = get_config()
-    db_path = os.path.join(config.base_dir, "cache", "entity_resolution.duckdb")
-    emb_dir = os.path.join(config.base_dir, "cache", "embeddings", "arctic")
-    ann_dir = os.path.join(config.base_dir, "cache", "ann", "arctic")
+def inspect_directory(title: str, emb_dir: str, ann_dir: str, duckdb_count: int, is_smoke: bool = False):
+    print("=" * 80)
+    print(f"AUDIT: {title.upper()}")
+    print("=" * 80)
 
     emb_path = os.path.join(emb_dir, "target_embeddings.npy")
     ids_path = os.path.join(emb_dir, "target_ids.json")
@@ -32,27 +31,7 @@ def inspect_arctic_index():
     index_path = os.path.join(ann_dir, "target.index")
     ann_meta_path = os.path.join(ann_dir, "metadata.json")
 
-    print("=" * 80)
-    print("ANTIGRAVITY V4.1 — ARCTIC TARGET INDEX VALIDATION AUDIT")
-    print("=" * 80)
-    print(f"Expected Production Targets: {EXPECTED_TARGET_COUNT:,}")
-    print(f"Current RSS:                 {get_current_rss_mb():.2f} MB")
-    print("-" * 80)
-
-    # 1. DuckDB Targets Count
-    duckdb_count = 0
-    if os.path.exists(db_path):
-        try:
-            conn = duckdb.connect(db_path, read_only=True)
-            duckdb_count = conn.execute("SELECT COUNT(*) FROM targets;").fetchone()[0]
-            conn.close()
-            print(f"DuckDB Targets in DB:        {duckdb_count:,}")
-        except Exception as e:
-            print(f"DuckDB Targets in DB:        ERROR ({e})")
-    else:
-        print(f"DuckDB Targets in DB:        NOT FOUND ({db_path})")
-
-    # 2. Embedding MMap Count & Shape
+    # 1. Embedding MMap Count & Shape
     emb_rows = 0
     emb_dim = 0
     if os.path.exists(emb_path):
@@ -66,7 +45,7 @@ def inspect_arctic_index():
     else:
         print(f"Disk-Backed Embedding Rows:  NOT FOUND ({emb_path})")
 
-    # 3. Target IDs Count
+    # 2. Target IDs Count
     ids_count = 0
     if os.path.exists(ids_path):
         try:
@@ -79,7 +58,7 @@ def inspect_arctic_index():
     else:
         print(f"Target IDs Registered:       NOT FOUND ({ids_path})")
 
-    # 4. FAISS Index ntotal
+    # 3. FAISS Index ntotal
     faiss_ntotal = 0
     index_type = "None"
     if os.path.exists(index_path):
@@ -101,7 +80,7 @@ def inspect_arctic_index():
     else:
         print(f"FAISS Index Total Vectors:   NOT FOUND ({index_path})")
 
-    # 5. Metadata Check
+    # 4. Metadata Check
     is_complete_emb = False
     if os.path.exists(emb_meta_path):
         with open(emb_meta_path, "r", encoding="utf-8") as f:
@@ -121,27 +100,68 @@ def inspect_arctic_index():
     print(f"Metric:                      Inner Product (Cosine Similarity)")
     print("-" * 80)
 
-    # 6. Evaluation Verdict
-    all_matched = (
-        duckdb_count == EXPECTED_TARGET_COUNT and
-        emb_rows == EXPECTED_TARGET_COUNT and
-        ids_count == EXPECTED_TARGET_COUNT and
-        (faiss_ntotal == EXPECTED_TARGET_COUNT or faiss_ntotal == 0) and
-        is_complete_emb and
-        is_complete_ann
-    )
-
-    if all_matched:
-        print("STATUS: VALID (COMPLETE 10.32M PRODUCTION INDEX)")
-        print("Ready for full V4.1 dense recall benchmarking.")
-    elif emb_rows > 0 and emb_rows == ids_count:
-        print(f"STATUS: SMOKE TEST / INCOMPLETE ({emb_rows:,} / {EXPECTED_TARGET_COUNT:,} targets)")
-        print("WARNING: This index is a partial development subset. It cannot be used for production recall benchmarks.")
+    # 5. Evaluation Verdict
+    if not is_smoke:
+        all_matched = (
+            duckdb_count == EXPECTED_TARGET_COUNT and
+            emb_rows == EXPECTED_TARGET_COUNT and
+            ids_count == EXPECTED_TARGET_COUNT and
+            faiss_ntotal == EXPECTED_TARGET_COUNT and
+            is_complete_emb and
+            is_complete_ann
+        )
+        if all_matched:
+            print("STATUS: VALID (COMPLETE 10,320,219 PRODUCTION INDEX)")
+            print("Ready for full V4.1 dense recall benchmarking.")
+        elif emb_rows > 0:
+            print(f"STATUS: INCOMPLETE ({emb_rows:,} / {EXPECTED_TARGET_COUNT:,} targets)")
+            print("WARNING: Incomplete embeddings found in production path. Will not pass production invariant.")
+        else:
+            print("STATUS: NOT YET ASSEMBLED (Run full pipeline to build)")
     else:
-        print("STATUS: INVALID / DESYNCHRONIZED ARTIFACTS")
-        print("Error: Target rows, IDs, and index counts do not match. Re-run build_arctic_embeddings.")
+        if emb_rows > 0 and emb_rows == ids_count:
+            print(f"STATUS: SMOKE TEST / DEV ARTIFACT ({emb_rows:,} targets)")
+            print("INFO: Safe sandbox artifact. Isolated from production pipeline.")
+        else:
+            print("STATUS: NO SMOKE TEST ARTIFACTS FOUND")
+    print("=" * 80)
+    print()
+
+def inspect_arctic_index():
+    config = get_config()
+    db_path = os.path.join(config.base_dir, "cache", "entity_resolution.duckdb")
+    prod_emb_dir = os.path.join(config.base_dir, "cache", "embeddings", "arctic")
+    prod_ann_dir = os.path.join(config.base_dir, "cache", "ann", "arctic")
+    smoke_emb_dir = os.path.join(config.base_dir, "cache", "embeddings", "arctic", "smoke")
+    smoke_ann_dir = os.path.join(config.base_dir, "cache", "ann", "arctic", "smoke")
 
     print("=" * 80)
+    print("ANTIGRAVITY V4.1 — ARCTIC TARGET INDEX VALIDATION AUDIT")
+    print("=" * 80)
+    print(f"Expected Production Targets: {EXPECTED_TARGET_COUNT:,}")
+    print(f"Current RSS:                 {get_current_rss_mb():.2f} MB")
+    print("-" * 80)
+
+    # 1. DuckDB Targets Count
+    duckdb_count = 0
+    if os.path.exists(db_path):
+        try:
+            conn = duckdb.connect(db_path, read_only=True)
+            duckdb_count = conn.execute("SELECT COUNT(*) FROM targets;").fetchone()[0]
+            conn.close()
+            print(f"DuckDB Targets in DB:        {duckdb_count:,}")
+        except Exception as e:
+            print(f"DuckDB Targets in DB:        ERROR ({e})")
+    else:
+        print(f"DuckDB Targets in DB:        NOT FOUND ({db_path})")
+    print()
+
+    # 2. Inspect Production Index
+    inspect_directory("Production Index (Full Universe: 10,320,219)", prod_emb_dir, prod_ann_dir, duckdb_count, is_smoke=False)
+
+    # 3. Inspect Smoke Test Index (if present)
+    if os.path.exists(smoke_ann_dir) or os.path.exists(smoke_emb_dir):
+        inspect_directory("Smoke Test / Sandbox Index", smoke_emb_dir, smoke_ann_dir, duckdb_count, is_smoke=True)
 
 if __name__ == "__main__":
     inspect_arctic_index()

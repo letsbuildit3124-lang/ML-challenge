@@ -210,7 +210,8 @@ class ArcticGPUOrchestrator:
 
         print("\n" + "=" * 80)
         print(f"[Assembly Stage] Merging {len(completed_chunks)} verified chunks into persistent store...")
-        print(f"Target Total Rows: {total_rows:,} | Dimension: {self.dimension}")
+        print(f"Target Total Rows: {total_rows:,} / {EXPECTED_TOTAL_TARGETS:,}")
+        print(f"Complete Universe: {'YES (PRODUCTION CORPUS)' if is_complete else 'NO (SMOKE / DEV SUBSET)'}")
         print(f"Target File:       {self.merged_emb_path}")
         print(f"Target IDs:        {self.merged_ids_path}")
         print("=" * 80)
@@ -254,6 +255,13 @@ class ArcticGPUOrchestrator:
             del fp_merged
             gc.collect()
 
+        # Strict Production Corpus Invariants
+        if is_complete:
+            assert len(all_target_ids) == EXPECTED_TOTAL_TARGETS, f"Total IDs mismatch: {len(all_target_ids)} != {EXPECTED_TOTAL_TARGETS}"
+            unique_count = len(set(all_target_ids))
+            assert unique_count == EXPECTED_TOTAL_TARGETS, f"Duplicate target IDs in merged corpus! Unique {unique_count:,} != Expected {EXPECTED_TOTAL_TARGETS:,}"
+            print(f"[Assembly Stage] Verified 100% unique target IDs ({unique_count:,} records).")
+
         # Save merged target IDs JSON
         with open(self.merged_ids_path, "w", encoding="utf-8") as f:
             json.dump(all_target_ids, f)
@@ -275,7 +283,7 @@ class ArcticGPUOrchestrator:
         with open(self.merged_meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
 
-        print(f"[Assembly Stage] Assembly completed successfully ({total_rows:,} rows).")
+        print(f"[Assembly Stage] Assembly completed successfully ({total_rows:,} rows | Complete: {is_complete}).")
         return self.merged_emb_path, self.merged_ids_path
 
     def validate_preflight(self, skip_kaggle: bool = False):
