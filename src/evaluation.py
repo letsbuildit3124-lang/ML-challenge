@@ -83,14 +83,32 @@ def evaluate_predictions(
     }
 
 def find_best_threshold(
-    gt_mapping: Dict[str, List[str]],
-    val_cand_scores: Dict[str, List[Tuple[str, float]]],
-    threshold_grid: List[float]
-) -> Tuple[float, Dict[str, float], List[Dict[str, Any]]]:
+    arg1: Any,
+    arg2: Any,
+    threshold_grid: Optional[List[float]] = None,
+    metric: str = "f0_5"
+) -> Tuple[float, Dict[str, float]]:
     """
     Searches threshold grid to find optimal decision threshold on validation set.
+    Supports either order: (gt_mapping, cand_scores) or (cand_scores, gt_mapping).
     """
-    best_thresh = 0.50
+    # Detect which argument is cand_scores vs gt_mapping
+    # cand_scores values are List[Tuple[str, float]], gt_mapping values are List[str]
+    sample_val = None
+    if isinstance(arg1, dict) and len(arg1) > 0:
+        sample_val = next(iter(arg1.values()))
+    
+    if sample_val and len(sample_val) > 0 and isinstance(sample_val[0], tuple):
+        val_cand_scores = arg1
+        gt_mapping = arg2
+    else:
+        gt_mapping = arg1
+        val_cand_scores = arg2
+
+    if threshold_grid is None:
+        threshold_grid = [0.30, 0.40, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+
+    best_thresh = 0.65
     best_metrics = None
     all_results = []
 
@@ -107,6 +125,10 @@ def find_best_threshold(
 
         metrics = evaluate_predictions(gt_mapping, pred_map)
         metrics["threshold"] = thresh
+        metrics["macro_f0_5"] = metrics.get("macro_f05", 0.0)
+        metrics["macro_f1"] = (2.0 * metrics["macro_precision"] * metrics["macro_recall"]) / max(1e-9, metrics["macro_precision"] + metrics["macro_recall"])
+        metrics["precision"] = metrics.get("macro_precision", 0.0)
+        metrics["recall"] = metrics.get("macro_recall", 0.0)
         all_results.append(metrics)
 
         print(f"{thresh:<10.2f} | {metrics['macro_f05']:<12.4f} | {metrics['macro_precision']:<10.4f} | {metrics['macro_recall']:<10.4f} | {metrics['avg_predicted_matches']:<12.2f} | {metrics['singleton_accuracy']*100:<9.1f}%")
@@ -119,4 +141,4 @@ def find_best_threshold(
     print(f"Optimal Threshold Selected: {best_thresh:.2f} (Macro F0.5 = {best_metrics['macro_f05']:.4f})")
     print("-" * 75)
 
-    return best_thresh, best_metrics, all_results
+    return best_thresh, best_metrics
