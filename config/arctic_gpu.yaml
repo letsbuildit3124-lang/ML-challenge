@@ -4,6 +4,8 @@
 kaggle:
   # Dedicated Arctic ER worker kernel slug on Kaggle
   kernel: "rajeshshitap/arctic-entity-resolution-worker"
+  # Dedicated dataset slug used to transfer target Parquet chunks to Kaggle
+  dataset: "rajeshshitap/arctic-er-input"
   # Accelerator choices: NvidiaL4 (recommended), NvidiaTeslaT4, NvidiaA100
   accelerator: "NvidiaL4"
   # Maximum allowed time per Kaggle kernel execution in seconds (default: 3600 = 1 hour)
@@ -12,6 +14,8 @@ kaggle:
   poll_interval_seconds: 15
   # Enable internet in Kaggle kernel for model weight download
   enable_internet: true
+  # Optional cleanup of remote dataset (default: false for safety/auditability)
+  cleanup_remote_dataset: false
 
 embedding:
   # Challenge-permitted 384-d dense representation model
@@ -46,6 +50,7 @@ paths:
   input_dir: "cache/arctic_gpu/input"
   output_dir: "cache/arctic_gpu/output"
   logs_dir: "cache/arctic_gpu/logs"
+  staging_dir: "cache/arctic_gpu/staging"
   worker_dir: "kaggle/arctic_worker"
   merged_embeddings: "cache/embeddings/arctic/target_embeddings.npy"
   merged_ids: "cache/embeddings/arctic/target_ids.json"

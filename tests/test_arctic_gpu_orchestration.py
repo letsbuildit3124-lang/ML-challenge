@@ -58,6 +58,26 @@ class TestArcticGPUOrchestration(unittest.TestCase):
             self.assertEqual(len(reloaded["chunks"]), 1)
             self.assertEqual(reloaded["chunks"][0]["status"], "completed")
 
+    def test_kernel_package_preparation_and_dataset_sources(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ctrl = KaggleController(
+                kernel_slug="rajeshshitap/arctic-entity-resolution-worker",
+                dataset_slug="rajeshshitap/arctic-er-input"
+            )
+
+            kernel_dir = ctrl.prepare_kernel_package(chunk_id=0, staging_root=tmpdir)
+            self.assertTrue(os.path.exists(kernel_dir))
+            self.assertTrue(os.path.exists(os.path.join(kernel_dir, "kaggle_worker.py")))
+            self.assertTrue(os.path.exists(os.path.join(kernel_dir, "kernel-metadata.json")))
+
+            with open(os.path.join(kernel_dir, "kernel-metadata.json"), "r") as f:
+                meta = json.load(f)
+
+            self.assertEqual(meta["id"], "rajeshshitap/arctic-entity-resolution-worker")
+            self.assertEqual(meta["dataset_sources"], ["rajeshshitap/arctic-er-input"])
+            self.assertEqual(meta["enable_gpu"], "true")
+            self.assertEqual(meta["enable_internet"], "true")
+
     def test_positional_verification_and_integrity(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_parquet = os.path.join(tmpdir, "chunk_000000.parquet")
@@ -88,7 +108,7 @@ class TestArcticGPUOrchestration(unittest.TestCase):
             np.save(emb_file, norm_embs)
             pl.DataFrame({"target_id": ids}).write_parquet(ids_file)
 
-            ctrl = KaggleController(kernel_slug="test/worker")
+            ctrl = KaggleController(kernel_slug="rajeshshitap/arctic-entity-resolution-worker")
 
             # Positive verification
             ok, msg, summary = ctrl.verify_chunk_output(
@@ -116,13 +136,16 @@ class TestArcticGPUOrchestration(unittest.TestCase):
 
     def test_dry_run_orchestrator(self):
         cfg = {
-            "kaggle": {"kernel": "user/test-worker", "accelerator": "NvidiaL4"},
+            "kaggle": {
+                "kernel": "rajeshshitap/arctic-entity-resolution-worker",
+                "dataset": "rajeshshitap/arctic-er-input",
+                "accelerator": "NvidiaL4"
+            },
             "embedding": {"model_name": "themelder/arctic-embed-xs-entity-resolution", "dimension": 384},
             "pipeline": {"chunk_size": 50000, "dense_top_k": 50},
             "paths": {"root": "cache/arctic_gpu"}
         }
         orch = ArcticGPUOrchestrator(config_dict=cfg, limit_targets=1000)
-        # Should run without error
         orch.print_dry_run_plan()
 
 if __name__ == "__main__":

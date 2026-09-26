@@ -5,7 +5,7 @@ Runs inside a Kaggle Kernel / Notebook environment to encode target text chunks 
 Compliance & Determinism:
 - Zero external data lookups (No web scraping, no external APIs).
 - Uses only challenge-provided data & approved Arctic ER model.
-- Deterministic single-chunk input discovery.
+- Recursively scans /kaggle/input/ for the mounted target Parquet chunk.
 - Standard precision (FP32) by default; configurable FP16 for CUDA.
 - Output files strictly prefixed with the input chunk name.
 """
@@ -61,9 +61,10 @@ def run_worker():
     print(f"Target Model:     {MODEL_NAME}")
     print(f"Embedding Dim:    {EMBEDDING_DIM}")
 
-    # 2. Deterministic Input Parquet Chunk Discovery
-    # Look for candidate input Parquet files in staging/working directories
-    search_dirs = [".", "/kaggle/working", "/kaggle/input"]
+    # 2. Deterministic Input Parquet Discovery from /kaggle/input/
+    # First search /kaggle/input (standard Kaggle mounted dataset path)
+    # If not found or outside Kaggle, fallback to local workspace directories for testing
+    search_dirs = ["/kaggle/input"] if os.path.exists("/kaggle/input") else [".", "/kaggle/working"]
     candidates = []
     seen_paths = set()
 
@@ -78,7 +79,8 @@ def run_worker():
                             candidates.append(full_path)
 
     if len(candidates) == 0:
-        print("\n[FATAL ERROR]: No input Parquet chunk found in workspace search directories ([., /kaggle/working, /kaggle/input])!")
+        print(f"\n[FATAL ERROR]: No input Parquet chunk found in mounted dataset search directories ({search_dirs})!")
+        print("Ensure the Kaggle kernel has the input dataset mounted in 'dataset_sources'.")
         sys.exit(1)
 
     if len(candidates) > 1:
@@ -89,15 +91,19 @@ def run_worker():
         sys.exit(1)
 
     input_file = candidates[0]
+    input_dir = os.path.dirname(input_file)
     input_basename = os.path.basename(input_file)
     out_prefix = os.path.splitext(input_basename)[0]
 
-    print(f"Input Parquet:    {input_file}")
-    print(f"Output Prefix:    {out_prefix}")
+    print("-" * 80)
+    print(f"Input Dataset Dir: {input_dir}")
+    print(f"Input Parquet:     {input_file}")
+    print(f"Input Filename:    {input_basename}")
+    print(f"Output Prefix:     {out_prefix}")
 
     df = pl.read_parquet(input_file)
     n_rows = len(df)
-    print(f"Total Records:    {n_rows:,}")
+    print(f"Total Rows:        {n_rows:,}")
 
     # Standardize columns
     cols = {c.lower(): c for c in df.columns}
@@ -111,7 +117,7 @@ def run_worker():
     addrs_list = [str(x) if x is not None else "" for x in df[addr_col].to_list()] if addr_col else [""] * n_rows
     ctrys_list = [str(x) if x is not None else "" for x in df[ctry_col].to_list()] if ctry_col else [""] * n_rows
 
-    print(f"Target IDs:       {len(ids_list):,} (First: {ids_list[0]}, Last: {ids_list[-1]})")
+    print(f"Target IDs:        {len(ids_list):,} (First: {ids_list[0]}, Last: {ids_list[-1]})")
 
     # 3. Format Texts
     texts = [
@@ -179,7 +185,7 @@ def run_worker():
     norms = np.linalg.norm(embeddings, axis=1)
     assert np.all(np.isclose(norms, 1.0, atol=1e-3)), "Embeddings not L2 normalized!"
 
-    # 7. Save Outputs Derived Deterministically from Input Filename
+    # 7. Save Outputs to Current Directory (/kaggle/working)
     out_emb_path = f"{out_prefix}_embeddings.npy"
     out_ids_path = f"{out_prefix}_ids.parquet"
     out_meta_path = f"{out_prefix}_meta.json"
@@ -196,6 +202,7 @@ def run_worker():
     metadata = {
         "chunk_id": out_prefix,
         "input_filename": input_basename,
+        "input_dataset_dir": input_dir,
         "model_name": MODEL_NAME,
         "embedding_dimension": EMBEDDING_DIM,
         "dtype": "float32",

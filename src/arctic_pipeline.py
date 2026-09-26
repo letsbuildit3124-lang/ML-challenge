@@ -118,7 +118,8 @@ class ArcticGPUOrchestrator:
 
         # Kaggle Config
         kaggle_cfg = config_dict.get("kaggle", {})
-        self.kernel_slug = kaggle_cfg.get("kernel", "YOUR_KAGGLE_USERNAME/arctic-entity-resolution-worker")
+        self.kernel_slug = kaggle_cfg.get("kernel", "rajeshshitap/arctic-entity-resolution-worker")
+        self.dataset_slug = kaggle_cfg.get("dataset", "rajeshshitap/arctic-er-input")
         self.accelerator = kaggle_cfg.get("accelerator", "NvidiaL4")
         self.timeout_seconds = int(kaggle_cfg.get("timeout_seconds", 3600))
         self.poll_interval = int(kaggle_cfg.get("poll_interval_seconds", 15))
@@ -139,6 +140,7 @@ class ArcticGPUOrchestrator:
 
         self.kaggle_ctrl = KaggleController(
             kernel_slug=self.kernel_slug,
+            dataset_slug=self.dataset_slug,
             accelerator=self.accelerator,
             timeout_seconds=self.timeout_seconds,
             poll_interval=self.poll_interval,
@@ -386,31 +388,38 @@ class ArcticGPUOrchestrator:
                     chunk_meta["attempts"] = attempts
                     print(f"\n[Kaggle Job] Processing Chunk {chunk_id:04d}/{total_chunks:04d} (Attempt {attempts}/{self.max_retries})...")
 
-                    # Stage job package
-                    job_dir = self.kaggle_ctrl.prepare_job_package(chunk_id, input_parquet, self.staging_dir)
+                    # 1. Stage and upload Parquet chunk to dedicated Kaggle Dataset
+                    ds_ok, ds_msg = self.kaggle_ctrl.upload_dataset_chunk(chunk_id, input_parquet, self.staging_dir)
+                    if not ds_ok:
+                        print(f"  [DATASET ERROR] {ds_msg}")
+                        time.sleep(5)
+                        continue
 
-                    # Submit kernel
-                    push_ok, push_msg = self.kaggle_ctrl.submit_job(job_dir, chunk_id)
+                    # 2. Stage lightweight kernel package (code + metadata referencing dataset)
+                    kernel_dir = self.kaggle_ctrl.prepare_kernel_package(chunk_id, self.staging_dir)
+
+                    # 3. Submit kernel
+                    push_ok, push_msg = self.kaggle_ctrl.submit_job(kernel_dir, chunk_id)
                     if not push_ok:
                         print(f"  [ERROR] {push_msg}")
                         time.sleep(5)
                         continue
 
-                    # Poll kernel execution
+                    # 4. Poll kernel execution
                     poll_ok, poll_msg = self.kaggle_ctrl.poll_job_status(chunk_id)
                     if not poll_ok:
                         print(f"  [ERROR] {poll_msg}")
                         time.sleep(10)
                         continue
 
-                    # Download outputs
+                    # 5. Download outputs
                     dl_ok, dl_msg = self.kaggle_ctrl.download_output(self.output_dir, chunk_id)
                     if not dl_ok:
                         print(f"  [ERROR] {dl_msg}")
                         time.sleep(5)
                         continue
 
-                    # Verify outputs
+                    # 6. Strict row-for-row verification
                     v_ok, v_msg, v_summary = self.kaggle_ctrl.verify_chunk_output(
                         chunk_id,
                         input_parquet,
@@ -434,9 +443,12 @@ class ArcticGPUOrchestrator:
                     self.exporter.save_manifest(manifest)
                     print(f"  -> Chunk {chunk_id:04d} VERIFIED & COMPLETED successfully!")
 
-                    # Clean up staging job dir
-                    if os.path.exists(job_dir):
-                        shutil.rmtree(job_dir, ignore_errors=True)
+                    # Clean up local staging directories
+                    if os.path.exists(kernel_dir):
+                        shutil.rmtree(kernel_dir, ignore_errors=True)
+                    ds_staging = os.path.join(self.staging_dir, f"dataset_staging_{chunk_id:06d}")
+                    if os.path.exists(ds_staging):
+                        shutil.rmtree(ds_staging, ignore_errors=True)
 
                 if not success:
                     print(f"\n[FATAL ERROR]: Chunk {chunk_id} failed after {self.max_retries} attempts! Halting pipeline.")

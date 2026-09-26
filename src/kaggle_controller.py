@@ -1,7 +1,11 @@
 """
-Antigravity V4.1 Kaggle GPU Orchestration Controller.
-Manages automated package staging, Kaggle CLI kernel submission, remote execution polling,
-output retrieval, and strict positional verification.
+Antigravity V4.1 Kaggle GPU & Dataset Orchestration Controller.
+Manages automated lifecycle:
+1. Staging and uploading input Parquet chunks as a dedicated Kaggle Dataset (`kaggle datasets create` / `version`)
+2. Packaging lightweight kernel code with explicit `dataset_sources` (`kaggle kernels push`)
+3. Remote GPU kernel status monitoring (`kaggle kernels status`)
+4. Output embedding retrieval (`kaggle kernels output`)
+5. Strict row-for-row positional verification on EC2
 
 Uses official Kaggle CLI via subprocess with structured error handling & logging.
 """
@@ -27,7 +31,7 @@ from src.resource_tracker import get_current_rss_mb
 logger = logging.getLogger("arctic.kaggle")
 
 def compute_sha256(file_path: str) -> str:
-    """Computes SHA256 checksum of a file in 64KB chunks."""
+    """Computes SHA256 checksum of a file in 64KB blocks."""
     hasher = hashlib.sha256()
     with open(file_path, "rb") as f:
         while chunk := f.read(65536):
@@ -37,11 +41,12 @@ def compute_sha256(file_path: str) -> str:
 
 class KaggleController:
     """
-    Automated controller for Kaggle GPU kernel lifecycle.
+    Automated controller for Kaggle Dataset and GPU kernel lifecycles.
     """
     def __init__(
         self,
-        kernel_slug: str,
+        kernel_slug: str = "rajeshshitap/arctic-entity-resolution-worker",
+        dataset_slug: str = "rajeshshitap/arctic-er-input",
         accelerator: str = "NvidiaL4",
         timeout_seconds: int = 3600,
         poll_interval: int = 15,
@@ -50,6 +55,7 @@ class KaggleController:
     ):
         config = get_config()
         self.kernel_slug = kernel_slug
+        self.dataset_slug = dataset_slug
         self.accelerator = accelerator
         self.timeout_seconds = timeout_seconds
         self.poll_interval = poll_interval
@@ -99,30 +105,95 @@ class KaggleController:
 
         return True, f"Kaggle CLI ready ({cli_version}) with verified active authentication."
 
-    def prepare_job_package(
+    def upload_dataset_chunk(
         self,
         chunk_id: int,
         input_parquet_path: str,
         staging_root: str
+    ) -> Tuple[bool, str]:
+        """
+        Transfers the input Parquet chunk to Kaggle by creating or versioning the dedicated dataset.
+        """
+        ds_dir = os.path.join(staging_root, f"dataset_staging_{chunk_id:06d}")
+        if os.path.exists(ds_dir):
+            shutil.rmtree(ds_dir, ignore_errors=True)
+        os.makedirs(ds_dir, exist_ok=True)
+
+        # Copy single chunk file
+        chunk_filename = os.path.basename(input_parquet_path)
+        shutil.copy2(input_parquet_path, os.path.join(ds_dir, chunk_filename))
+
+        # Create dataset-metadata.json
+        meta = {
+            "title": "Arctic ER Input Chunk",
+            "id": self.dataset_slug,
+            "licenses": [{"name": "CC0-1.0"}]
+        }
+        with open(os.path.join(ds_dir, "dataset-metadata.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+
+        log_file = os.path.join(self.logs_dir, f"chunk_{chunk_id:06d}.log")
+        with open(log_file, "a", encoding="utf-8") as f_log:
+            f_log.write(f"\n[{datetime.now(timezone.utc).isoformat()}] Uploading Dataset Chunk {chunk_id:04d} to {self.dataset_slug}...\n")
+
+        # Check if dataset already exists
+        check_cmd = ["kaggle", "datasets", "status", self.dataset_slug]
+        check_res = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
+        dataset_exists = (check_res.returncode == 0) and ("404" not in check_res.stderr.lower())
+
+        if dataset_exists:
+            print(f"  -> Uploading new dataset version for Chunk {chunk_id:04d}...")
+            cmd = ["kaggle", "datasets", "version", "-p", ds_dir, "-m", f"Target Chunk {chunk_id:06d}"]
+        else:
+            print(f"  -> Creating Kaggle Dataset '{self.dataset_slug}' for Chunk {chunk_id:04d}...")
+            cmd = ["kaggle", "datasets", "create", "-p", ds_dir]
+
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        with open(log_file, "a", encoding="utf-8") as f_log:
+            f_log.write(f"Dataset Upload STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\nExit: {res.returncode}\n")
+
+        if res.returncode != 0:
+            err_msg = res.stderr.strip() or res.stdout.strip()
+            # If dataset creation conflicted because it exists, retry with version
+            if "already exists" in err_msg.lower():
+                print("  -> Dataset exists. Retrying with 'kaggle datasets version'...")
+                retry_cmd = ["kaggle", "datasets", "version", "-p", ds_dir, "-m", f"Target Chunk {chunk_id:06d}"]
+                retry_res = subprocess.run(retry_cmd, capture_output=True, text=True, check=False)
+                if retry_res.returncode != 0:
+                    return False, f"Failed to version dataset: {retry_res.stderr.strip()}"
+            else:
+                return False, f"Failed to upload dataset chunk: {err_msg}"
+
+        # Wait for dataset processing to complete on Kaggle
+        print("  -> Waiting for Kaggle Dataset version propagation...")
+        t_start = time.time()
+        while time.time() - t_start < 120:
+            status_res = subprocess.run(["kaggle", "datasets", "status", self.dataset_slug], capture_output=True, text=True, check=False)
+            if "ready" in status_res.stdout.lower() or status_res.returncode == 0:
+                break
+            time.sleep(5)
+
+        return True, "Dataset chunk uploaded successfully."
+
+    def prepare_kernel_package(
+        self,
+        chunk_id: int,
+        staging_root: str
     ) -> str:
         """
-        Creates a dedicated Kaggle kernel staging folder containing:
-        - kaggle_worker.py
-        - chunk_XXXXXX.parquet
-        - kernel-metadata.json
+        Creates a lightweight Kaggle kernel package containing only code and metadata.
+        Explicitly links the dataset in `dataset_sources`.
         """
-        job_dir = os.path.join(staging_root, f"job_chunk_{chunk_id:06d}")
-        os.makedirs(job_dir, exist_ok=True)
+        kernel_dir = os.path.join(staging_root, f"kernel_staging_{chunk_id:06d}")
+        if os.path.exists(kernel_dir):
+            shutil.rmtree(kernel_dir, ignore_errors=True)
+        os.makedirs(kernel_dir, exist_ok=True)
 
         # Copy worker script
         worker_src = os.path.join(self.worker_src_dir, "kaggle_worker.py")
-        shutil.copy2(worker_src, os.path.join(job_dir, "kaggle_worker.py"))
+        shutil.copy2(worker_src, os.path.join(kernel_dir, "kaggle_worker.py"))
 
-        # Copy input chunk
-        chunk_dest = os.path.join(job_dir, os.path.basename(input_parquet_path))
-        shutil.copy2(input_parquet_path, chunk_dest)
-
-        # Generate kernel metadata
+        # Generate kernel metadata with dataset_sources
         kernel_meta = {
             "id": self.kernel_slug,
             "title": "Arctic Entity Resolution Worker",
@@ -133,18 +204,20 @@ class KaggleController:
             "enable_gpu": "true",
             "enable_tpu": "false",
             "enable_internet": "true",
-            "dataset_sources": [],
+            "dataset_sources": [
+                self.dataset_slug
+            ],
             "competition_sources": [],
             "kernel_sources": [],
             "model_sources": []
         }
 
-        with open(os.path.join(job_dir, "kernel-metadata.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(kernel_dir, "kernel-metadata.json"), "w", encoding="utf-8") as f:
             json.dump(kernel_meta, f, indent=2)
 
-        return job_dir
+        return kernel_dir
 
-    def submit_job(self, job_dir: str, chunk_id: int) -> Tuple[bool, str]:
+    def submit_job(self, kernel_dir: str, chunk_id: int) -> Tuple[bool, str]:
         """
         Pushes and starts Kaggle kernel execution via `kaggle kernels push`.
         """
@@ -152,7 +225,7 @@ class KaggleController:
         with open(log_file, "a", encoding="utf-8") as f_log:
             f_log.write(f"\n[{datetime.now(timezone.utc).isoformat()}] Pushing kernel: {self.kernel_slug}\n")
 
-        cmd = ["kaggle", "kernels", "push", "-p", job_dir]
+        cmd = ["kaggle", "kernels", "push", "-p", kernel_dir]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
         with open(log_file, "a", encoding="utf-8") as f_log:
@@ -230,7 +303,9 @@ class KaggleController:
         5. Checks L2 normalization on embeddings.
         6. Validates SHA256 checksums.
         """
-        chunk_prefix = f"chunk_{chunk_id:06d}"
+        input_basename = os.path.basename(input_parquet_path)
+        chunk_prefix = os.path.splitext(input_basename)[0]
+
         emb_file = os.path.join(output_dir, f"{chunk_prefix}_embeddings.npy")
         ids_file = os.path.join(output_dir, f"{chunk_prefix}_ids.parquet")
         meta_file = os.path.join(output_dir, f"{chunk_prefix}_meta.json")
@@ -262,7 +337,6 @@ class KaggleController:
 
         # 4. Strict Row-for-Row Target ID Positional Alignment
         if in_ids != out_ids:
-            # Find first mismatched index for diagnosis
             for idx in range(in_count):
                 if in_ids[idx] != out_ids[idx]:
                     return False, f"Positional ID mismatch at row {idx}: Input '{in_ids[idx]}' != Output '{out_ids[idx]}'", {}
