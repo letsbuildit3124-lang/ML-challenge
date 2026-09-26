@@ -521,20 +521,75 @@ def train_full_universe_production_model(
         rule_engine.learn_from_pairs(train_pairs_for_rules)
         rule_engine.save(rules_cache)
 
-    # Step 7: Fast Target Extraction from Parquet Tables (100% S1 Universe Coverage)
-    logger.info("[Step 4/5] Extracting Positive Target Records representing 100% of Matched S1 Entities via DuckDB Parquet Scan...")
+    # Step 7: Stratified Target Selection (Balanced S2 & S3 Coverage across Universe)
+    max_train_targets = 400_000
+    max_val_targets = 100_000
+
     train_target_to_s1: Dict[str, str] = {}
+    train_s2_cnt = 0
+    train_s3_cnt = 0
+    half_train = max_train_targets // 2
+
     for sid in train_s1_ids:
-        for tid in gt_map.get(sid, []):
-            train_target_to_s1[tid] = sid
+        t_list = gt_map.get(sid, [])
+        for tid in t_list:
+            if tid.startswith("S2_") or tid.startswith("test_source2") or "s2" in tid.lower():
+                if train_s2_cnt < half_train:
+                    train_target_to_s1[tid] = sid
+                    train_s2_cnt += 1
+            else:
+                if train_s3_cnt < half_train:
+                    train_target_to_s1[tid] = sid
+                    train_s3_cnt += 1
+            if train_s2_cnt >= half_train and train_s3_cnt >= half_train:
+                break
+        if train_s2_cnt >= half_train and train_s3_cnt >= half_train:
+            break
+
+    # If targets didn't have explicit S2/S3 prefix, fill remaining quota
+    if len(train_target_to_s1) < max_train_targets:
+        for sid in train_s1_ids:
+            for tid in gt_map.get(sid, []):
+                if tid not in train_target_to_s1:
+                    train_target_to_s1[tid] = sid
+                    if len(train_target_to_s1) >= max_train_targets:
+                        break
+            if len(train_target_to_s1) >= max_train_targets:
+                break
 
     val_target_to_s1: Dict[str, str] = {}
+    val_s2_cnt = 0
+    val_s3_cnt = 0
+    half_val = max_val_targets // 2
+
     for sid in val_s1_ids:
-        for tid in gt_map.get(sid, []):
-            val_target_to_s1[tid] = sid
+        t_list = gt_map.get(sid, [])
+        for tid in t_list:
+            if tid.startswith("S2_") or tid.startswith("test_source2") or "s2" in tid.lower():
+                if val_s2_cnt < half_val:
+                    val_target_to_s1[tid] = sid
+                    val_s2_cnt += 1
+            else:
+                if val_s3_cnt < half_val:
+                    val_target_to_s1[tid] = sid
+                    val_s3_cnt += 1
+            if val_s2_cnt >= half_val and val_s3_cnt >= half_val:
+                break
+        if val_s2_cnt >= half_val and val_s3_cnt >= half_val:
+            break
+
+    if len(val_target_to_s1) < max_val_targets:
+        for sid in val_s1_ids:
+            for tid in gt_map.get(sid, []):
+                if tid not in val_target_to_s1:
+                    val_target_to_s1[tid] = sid
+                    if len(val_target_to_s1) >= max_val_targets:
+                        break
+            if len(val_target_to_s1) >= max_val_targets:
+                break
 
     all_target_ids = set(train_target_to_s1.keys()) | set(val_target_to_s1.keys())
-    logger.info(f"Selected {len(all_target_ids):,} representative positive targets ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val) across Source 2 and Source 3.")
+    logger.info(f"Selected {len(all_target_ids):,} representative positive targets ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val) stratified across Source 2 and Source 3.")
 
     train_features_cache = cache_dir / "train_features.npz"
     if train_features_cache.exists():
@@ -565,6 +620,8 @@ def train_full_universe_production_model(
             initargs=(train_retrieval_engine, val_retrieval_engine, train_s1_dict, val_s1_dict, train_s1_by_id, val_s1_by_id, extractor),
         ) as executor:
             for parquet_file in [train_s2_parquet, train_s3_parquet]:
+                if total_streamed_targets >= len(all_target_ids):
+                    break
                 logger.info(f"  Streaming pre-normalized targets from {parquet_file.name} across {num_workers} CPU workers...")
                 cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
 
@@ -619,6 +676,8 @@ def train_full_universe_production_model(
                         )
 
                     del chunk_rows
+                    if total_streamed_targets >= len(all_target_ids):
+                        break
 
         con.close()
         logger.info(f"Target streaming complete in {time.time() - t_mine_start:.2f}s. Assembling feature matrices...")
