@@ -186,7 +186,11 @@ class V5NgramRetriever:
                 r.s1_id,
                 t.eid AS target_id,
                 r.prov_mask,
-                r.total_score
+                r.total_score,
+                t.norm_name,
+                t.compact_name,
+                t.norm_addr,
+                t.country
             FROM ranked r
             JOIN targets t ON r.target_row_id = t.target_row_id
             WHERE r.rnk <= {top_k};
@@ -201,9 +205,28 @@ class V5NgramRetriever:
             except Exception:
                 pass
 
-        results: Dict[str, Dict[str, Tuple[int, float]]] = defaultdict(dict)
-        for s1_id, target_id, mask, score in rows:
-            results[s1_id][target_id] = (int(mask), float(score))
+        results: Dict[str, Dict[str, Tuple[int, float, Dict[str, Any]]]] = defaultdict(dict)
+        for s1_id, target_id, mask, score, t_name, t_cname, t_addr, t_ctry in rows:
+            n_norm = t_name or ""
+            a_norm = t_addr or ""
+            n_toks = n_norm.split()
+            a_toks = a_norm.split()
+            num_toks = [w for w in a_toks if w.isdigit()]
+
+            rec = {
+                "eid": target_id,
+                "norm_name": n_norm,
+                "compact_name": t_cname or "",
+                "norm_addr": a_norm,
+                "country": t_ctry or "",
+                "name_tokens": n_toks,
+                "name_tok_set": set(n_toks),
+                "addr_tokens": a_toks,
+                "addr_tok_set": set(a_toks),
+                "numeric_tokens": num_toks,
+                "numeric_tok_set": set(num_toks)
+            }
+            results[s1_id][target_id] = (int(mask), float(score), rec)
 
         return results
 

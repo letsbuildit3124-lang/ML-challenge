@@ -24,6 +24,7 @@ import numpy as np
 from src.config import get_config
 from src.data_loader import load_source_file, load_ground_truth
 from src.dataset_builder import extract_record_dict_from_df
+from src.blocking_v2 import add_v2_blocking_columns
 from src.rapidfuzz_features import compute_tiered_pairwise_features
 from src.model import LightGBMERModel, XGBoostERModel, get_model
 from src.evaluation import evaluate_predictions, find_best_threshold

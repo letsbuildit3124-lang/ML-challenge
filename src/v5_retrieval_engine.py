@@ -121,12 +121,12 @@ class V5RetrievalEngine:
             )
             for s1_id, t_dict in ngram_results.items():
                 s1_info = s1_lookup.get(s1_id, {})
-                for tid, (ng_mask, score) in t_dict.items():
+                for tid, (ng_mask, score, t_rec) in t_dict.items():
                     if tid in candidates_map[s1_id]:
                         prev_mask, rec = candidates_map[s1_id][tid]
                         candidates_map[s1_id][tid] = (prev_mask | ng_mask, rec)
                     else:
-                        rec = {"eid": tid, "norm_name": "", "norm_addr": ""}
+                        rec = dict(t_rec)
                         rec.update(s1_info)
                         candidates_map[s1_id][tid] = (ng_mask, rec)
 
@@ -135,12 +135,12 @@ class V5RetrievalEngine:
             token_results = self.token_retriever.retrieve_token_candidates(s1_df, top_k=top_k_token)
             for s1_id, t_dict in token_results.items():
                 s1_info = s1_lookup.get(s1_id, {})
-                for tid, (tok_mask, score) in t_dict.items():
+                for tid, (tok_mask, score, t_rec) in t_dict.items():
                     if tid in candidates_map[s1_id]:
                         prev_mask, rec = candidates_map[s1_id][tid]
                         candidates_map[s1_id][tid] = (prev_mask | tok_mask, rec)
                     else:
-                        rec = {"eid": tid, "norm_name": "", "norm_addr": ""}
+                        rec = dict(t_rec)
                         rec.update(s1_info)
                         candidates_map[s1_id][tid] = (tok_mask, rec)
 
@@ -149,12 +149,12 @@ class V5RetrievalEngine:
             addr_results = self.address_retriever.retrieve_address_candidates(s1_df, top_k=top_k_address)
             for s1_id, t_dict in addr_results.items():
                 s1_info = s1_lookup.get(s1_id, {})
-                for tid, (addr_mask, score) in t_dict.items():
+                for tid, (addr_mask, score, t_rec) in t_dict.items():
                     if tid in candidates_map[s1_id]:
                         prev_mask, rec = candidates_map[s1_id][tid]
                         candidates_map[s1_id][tid] = (prev_mask | addr_mask, rec)
                     else:
-                        rec = {"eid": tid, "norm_name": "", "norm_addr": ""}
+                        rec = dict(t_rec)
                         rec.update(s1_info)
                         candidates_map[s1_id][tid] = (addr_mask, rec)
 
