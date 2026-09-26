@@ -78,7 +78,7 @@ def train_v5_production_model(
     engine.indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
 
     # 3. Stream S1 Chunks, Mine Candidates & Extract Features
-    print("\n[3/4] High-speed candidate retrieval and hard-negative mining...", flush=True)
+    print("\n[3/4] High-speed candidate retrieval and parallel hard-negative mining...", flush=True)
     t_feat_start = time.time()
     
     all_X: List[np.ndarray] = []
@@ -89,6 +89,32 @@ def train_v5_production_model(
     chunk_idx = 0
 
     target_total = max_train_s1 if max_train_s1 > 0 else 2083574
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def extract_s1_features_subbatch(sub_items):
+        # sub_items is list of (s1_id, cand_list)
+        sub_X = []
+        sub_y = []
+        sub_pos = 0
+        sub_neg = 0
+        for s1_id, cand_list in sub_items:
+            s1_rec = s1_records.get(s1_id, {})
+            neg_count = 0
+            for tid, mask, score, t_rec in cand_list:
+                is_pos = (hash((s1_id, tid)) in gt_pairs_hashes)
+                if is_pos:
+                    feat = compute_tiered_pairwise_features(s1_rec, t_rec, tid, provenance_mask=mask)
+                    sub_X.append(feat)
+                    sub_y.append(1)
+                    sub_pos += 1
+                elif neg_count < max_negatives_per_s1:
+                    feat = compute_tiered_pairwise_features(s1_rec, t_rec, tid, provenance_mask=mask)
+                    sub_X.append(feat)
+                    sub_y.append(0)
+                    sub_neg += 1
+                    neg_count += 1
+        return sub_X, sub_y, sub_pos, sub_neg
 
     for s1_chunk_df in iter_source_file_chunks(config.train_s1_path, chunk_size=s1_chunk_size, expected_prefix="S1-"):
         n_chunk = len(s1_chunk_df)
@@ -104,40 +130,38 @@ def train_v5_production_model(
         s1_chunk_p = add_v2_blocking_columns(s1_chunk_df)
         s1_records = extract_record_dict_from_df(s1_chunk_p)
 
-        # High-speed candidate generation: skip redundant fuzzy pre-filter during training
+        # High-speed candidate generation: deterministic + token blockers (fastest + high coverage)
         cands_raw = engine.generate_candidates(
             s1_chunk_p,
             enable_deterministic=True,
-            enable_ngram=True,
+            enable_ngram=False,
             enable_token=True,
-            enable_address=True,
+            enable_address=False,
             enable_fts=False,
             enable_fuzzy_rerank=False,
-            max_candidates_per_s1=30
+            max_candidates_per_s1=25
         )
 
+        cand_items = list(cands_raw.items())
+        n_items = len(cand_items)
+        
+        # Parallel feature extraction across workers
         chunk_X = []
         chunk_y = []
 
-        for s1_id, cand_list in cands_raw.items():
-            s1_rec = s1_records.get(s1_id, {})
-            true_tgts = gt_map.get(s1_id, set())
+        if n_items > 0:
+            num_splits = min(workers, max(1, n_items // 1000))
+            split_size = (n_items + num_splits - 1) // num_splits
+            splits = [cand_items[i:i + split_size] for i in range(0, n_items, split_size)]
 
-            # Include positives + sampled hard negatives
-            neg_count = 0
-            for tid, mask, score, t_rec in cand_list:
-                is_pos = (hash((s1_id, tid)) in gt_pairs_hashes)
-                if is_pos:
-                    feat = compute_tiered_pairwise_features(s1_rec, t_rec, tid, provenance_mask=mask)
-                    chunk_X.append(feat)
-                    chunk_y.append(1)
-                    total_positives += 1
-                elif neg_count < max_negatives_per_s1:
-                    feat = compute_tiered_pairwise_features(s1_rec, t_rec, tid, provenance_mask=mask)
-                    chunk_X.append(feat)
-                    chunk_y.append(0)
-                    neg_count += 1
-                    total_negatives += 1
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                results = list(executor.map(extract_s1_features_subbatch, splits))
+
+            for sub_X, sub_y, sub_pos, sub_neg in results:
+                chunk_X.extend(sub_X)
+                chunk_y.extend(sub_y)
+                total_positives += sub_pos
+                total_negatives += sub_neg
 
         if chunk_X:
             all_X.append(np.array(chunk_X, dtype=np.float32))
@@ -151,7 +175,7 @@ def train_v5_production_model(
 
         print(f"  -> Chunk {chunk_idx}: Processed {processed_s1:,}/{target_total:,} S1 ({speed:,.0f} S1/s, ETA: {eta_sec:.0f}s) | Positives: {total_positives:,} | Negatives: {total_negatives:,} | RSS: {get_current_rss_mb():.1f} MB", flush=True)
 
-        del s1_chunk_df, s1_records, cands_raw
+        del s1_chunk_df, s1_records, cands_raw, cand_items, chunk_X, chunk_y
         gc.collect()
 
         if max_train_s1 > 0 and processed_s1 >= max_train_s1:
@@ -206,8 +230,8 @@ def train_v5_production_model(
 def main():
     parser = argparse.ArgumentParser(description="Antigravity V5 Production Model Retraining")
     parser.add_argument("--model", type=str, default="xgboost", choices=["xgboost", "lightgbm"], help="Model architecture")
-    parser.add_argument("--max-train-s1", type=int, default=100000, help="Max S1 entities to train on (default: 100,000 for fast ~1-2 min training; set 0 for all)")
-    parser.add_argument("--chunk-size", type=int, default=50000, help="S1 processing chunk size")
+    parser.add_argument("--max-train-s1", type=int, default=0, help="Max S1 entities to train on (default: 0 for 100% full dataset)")
+    parser.add_argument("--chunk-size", type=int, default=100000, help="S1 processing chunk size (default: 100,000)")
     parser.add_argument("--negatives", type=int, default=4, help="Mined hard negatives per S1 entity")
     parser.add_argument("--workers", type=int, default=8, help="Number of CPU workers (default: 8)")
     args = parser.parse_args()
