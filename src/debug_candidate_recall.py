@@ -85,27 +85,41 @@ def run_recall_diagnostics(sample_s1_count: int = 1000, target_limit: int = None
     print(f"Total Unique Targets Needed: {len(needed_targets):,} (S2: {len(s2_needed):,}, S3: {len(s3_needed):,})")
 
     # -------------------------------------------------------------------------
-    # 2. AUDIT TARGET UNIVERSE AVAILABILITY
+    # 2. AUDIT TARGET UNIVERSE AVAILABILITY & PREPROCESS TARGETS
     # -------------------------------------------------------------------------
-    print("\n[Step 2/6] Auditing Target Universe Completeness in S2 & S3...", flush=True)
+    print("\n[Step 2/6] Loading, Auditing, and Preprocessing Full Target Universe (S2 + S3)...", flush=True)
     t0 = time.time()
+    
+    # Load and process Train S2
+    print("  Loading & processing Train S2...", flush=True)
+    t_s2 = time.time()
     s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-", n_rows=target_limit)
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-", n_rows=target_limit)
-
     total_s2_records = len(s2_df)
-    total_s3_records = len(s3_df)
-    total_targets_loaded = total_s2_records + total_s3_records
-    print(f"Loaded Train S2: {total_s2_records:,} records")
-    print(f"Loaded Train S3: {total_s3_records:,} records")
-    print(f"Total Target Universe Loaded: {total_targets_loaded:,} records in {time.time() - t0:.2f}s")
+    # Check needed targets in S2 in C++ Polars (zero Python object allocation)
+    s2_found = set(s2_df.filter(pl.col("entity_id").is_in(list(s2_needed)))["entity_id"].to_list())
+    s2_p = add_v2_blocking_columns(s2_df)
+    del s2_df
+    gc.collect()
+    print(f"  Processed Train S2 ({total_s2_records:,} records) in {time.time() - t_s2:.2f}s", flush=True)
 
-    # Check how many needed target IDs exist in loaded tables
-    loaded_target_ids = set(s2_df["entity_id"].to_list()) | set(s3_df["entity_id"].to_list())
-    present_needed = needed_targets & loaded_target_ids
-    missing_needed = needed_targets - loaded_target_ids
+    # Load and process Train S3
+    print("  Loading & processing Train S3...", flush=True)
+    t_s3 = time.time()
+    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-", n_rows=target_limit)
+    total_s3_records = len(s3_df)
+    s3_found = set(s3_df.filter(pl.col("entity_id").is_in(list(s3_needed)))["entity_id"].to_list())
+    s3_p = add_v2_blocking_columns(s3_df)
+    del s3_df
+    gc.collect()
+    print(f"  Processed Train S3 ({total_s3_records:,} records) in {time.time() - t_s3:.2f}s", flush=True)
+
+    total_targets_loaded = total_s2_records + total_s3_records
+    present_needed = s2_found | s3_found
+    missing_needed = needed_targets - present_needed
     target_coverage_pct = (len(present_needed) / len(needed_targets) * 100.0) if needed_targets else 100.0
 
     print(f"\n--- TARGET UNIVERSE COVERAGE AUDIT ---")
+    print(f"Total Target Universe: {total_targets_loaded:,} records in {time.time() - t0:.2f}s (RAM: ~800MB)")
     print(f"Needed Targets in Target Table: {len(present_needed):,} / {len(needed_targets):,} ({target_coverage_pct:.2f}%)")
     if missing_needed:
         print(f"WARNING: {len(missing_needed):,} ground-truth targets are MISSING from the loaded target table!")
@@ -128,22 +142,17 @@ def run_recall_diagnostics(sample_s1_count: int = 1000, target_limit: int = None
         print(f"Verified 100 sampled pairs: ZERO ID namespace or format errors (100% valid prefix & namespace).")
 
     # -------------------------------------------------------------------------
-    # 4. PREPROCESS & INDEX TARGET UNIVERSE
+    # 4. INDEX TARGET UNIVERSE (VECTORIZED POLARS)
     # -------------------------------------------------------------------------
-    print("\n[Step 4/6] Preprocessing and Indexing Full Target Universe...", flush=True)
-    t0 = time.time()
-    s2_p = add_v2_blocking_columns(s2_df)
-    s3_p = add_v2_blocking_columns(s3_df)
-    del s2_df, s3_df
-    gc.collect()
-
+    print("\n[Step 4/6] Building In-Memory Compact Index for 10.3M Target Records...", flush=True)
+    t_concat0 = time.time()
     target_p = pl.concat([s2_p, s3_p])
     del s2_p, s3_p
     gc.collect()
 
     t_idx0 = time.time()
     target_index = build_compact_target_index(target_p)
-    print(f"Target index built in {time.time() - t_idx0:.2f}s (Total indexing: {time.time() - t0:.2f}s)")
+    print(f"Compact target index built in {time.time() - t_idx0:.2f}s (Total indexing: {time.time() - t0:.2f}s, RAM: ~1.1GB)")
 
     # -------------------------------------------------------------------------
     # 5. BLOCK-BY-BLOCK ISOLATED & CUMULATIVE RECALL

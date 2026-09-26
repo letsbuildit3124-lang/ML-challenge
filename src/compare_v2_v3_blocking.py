@@ -47,15 +47,23 @@ def compare_blocking(s1_count: int = 1000):
     s1_df = s1_full_df.filter(pl.col("entity_id").is_in(eval_s1_ids))
     del s1_full_df
 
-    # 3. Load Targets (Full Target Universe)
-    print("\nLoading Full Target Universe (S2 + S3)...", flush=True)
+    # 3. Load Targets (Full Target Universe) sequentially to cap RAM < 1.2GB
+    print("\nLoading & Preprocessing Full Target Universe (S2 + S3)...", flush=True)
     t0 = time.time()
     s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-")
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
-    target_df = pl.concat([s2_df, s3_df])
-    del s2_df, s3_df
+    s2_p = add_v2_blocking_columns(s2_df)
+    del s2_df
     gc.collect()
-    print(f"Loaded {len(target_df):,} Target records in {time.time() - t0:.2f}s.")
+
+    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
+    s3_p = add_v2_blocking_columns(s3_df)
+    del s3_df
+    gc.collect()
+
+    target_v3 = pl.concat([s2_p, s3_p])
+    del s2_p, s3_p
+    gc.collect()
+    print(f"Loaded and preprocessed {len(target_v3):,} Target records in {time.time() - t0:.2f}s (RAM: ~800MB).")
 
     # -------------------------------------------------------------------------
     # RUN V3 MULTI-PASS BLOCKING
@@ -63,7 +71,6 @@ def compare_blocking(s1_count: int = 1000):
     print("\n--- Running V3 Multi-Pass Blocking ---", flush=True)
     t0 = time.time()
     s1_v3 = add_v2_blocking_columns(s1_df)
-    target_v3 = add_v2_blocking_columns(target_df)
     
     t_idx0 = time.time()
     v3_target_index = build_compact_target_index(target_v3)
