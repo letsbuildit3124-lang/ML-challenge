@@ -30,19 +30,22 @@ from src.v5_retrieval_engine import V5RetrievalEngine
 def train_v5_production_model(
     model_choice: str = "xgboost",
     s1_chunk_size: int = 50000,
+    max_train_s1: int = 100000,
     max_negatives_per_s1: int = 4,
     workers: int = 8
 ):
     config = get_config()
     print("=" * 80)
-    print("ANTIGRAVITY V5 — PRODUCTION MODEL RETRAINING (100% DATA)")
+    print("ANTIGRAVITY V5 — HIGH-SPEED PRODUCTION RETRAINING")
     print("=" * 80)
     print(f"Model Architecture:   {model_choice.upper()}")
+    limit_str = f"{max_train_s1:,}" if max_train_s1 > 0 else "ALL (2.08M)"
+    print(f"S1 Training Limit:    {limit_str} entities")
     print(f"S1 Chunk Size:        {s1_chunk_size:,} | Negatives per S1: {max_negatives_per_s1} | Workers: {workers}")
     print(f"Initial Process RSS:  {get_current_rss_mb():.2f} MB")
     print("-" * 80)
 
-    # 1. Load Ground Truth into 64-bit integer hash set
+    # 1. Load Ground Truth into hash set
     print("[1/4] Loading Full Ground Truth into memory...", flush=True)
     t0 = time.time()
     gt_pairs_hashes: Set[int] = set()
@@ -75,7 +78,7 @@ def train_v5_production_model(
     engine.indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
 
     # 3. Stream S1 Chunks, Mine Candidates & Extract Features
-    print("\n[3/4] Streaming S1 entities and mining training pairs...", flush=True)
+    print("\n[3/4] High-speed candidate retrieval and hard-negative mining...", flush=True)
     t_feat_start = time.time()
     
     all_X: List[np.ndarray] = []
@@ -83,12 +86,25 @@ def train_v5_production_model(
     total_positives = 0
     total_negatives = 0
     processed_s1 = 0
+    chunk_idx = 0
+
+    target_total = max_train_s1 if max_train_s1 > 0 else 2083574
 
     for s1_chunk_df in iter_source_file_chunks(config.train_s1_path, chunk_size=s1_chunk_size, expected_prefix="S1-"):
         n_chunk = len(s1_chunk_df)
+        if max_train_s1 > 0 and (processed_s1 + n_chunk) > max_train_s1:
+            remaining = max_train_s1 - processed_s1
+            if remaining <= 0:
+                break
+            s1_chunk_df = s1_chunk_df.slice(0, remaining)
+            n_chunk = len(s1_chunk_df)
+
+        chunk_idx += 1
+        t_chunk_0 = time.time()
         s1_chunk_p = add_v2_blocking_columns(s1_chunk_df)
         s1_records = extract_record_dict_from_df(s1_chunk_p)
 
+        # High-speed candidate generation: skip redundant fuzzy pre-filter during training
         cands_raw = engine.generate_candidates(
             s1_chunk_p,
             enable_deterministic=True,
@@ -96,8 +112,8 @@ def train_v5_production_model(
             enable_token=True,
             enable_address=True,
             enable_fts=False,
-            enable_fuzzy_rerank=True,
-            max_candidates_per_s1=50
+            enable_fuzzy_rerank=False,
+            max_candidates_per_s1=30
         )
 
         chunk_X = []
@@ -128,10 +144,18 @@ def train_v5_production_model(
             all_y.append(np.array(chunk_y, dtype=np.int32))
 
         processed_s1 += n_chunk
-        print(f"  -> Processed {processed_s1:,} S1 entities | Total Positives: {total_positives:,} | Negatives: {total_negatives:,} | RSS: {get_current_rss_mb():.1f} MB", flush=True)
+        chunk_dur = max(time.time() - t_chunk_0, 0.001)
+        speed = processed_s1 / max(time.time() - t_feat_start, 0.001)
+        rem_s1 = max(target_total - processed_s1, 0)
+        eta_sec = rem_s1 / speed if speed > 0 else 0
+
+        print(f"  -> Chunk {chunk_idx}: Processed {processed_s1:,}/{target_total:,} S1 ({speed:,.0f} S1/s, ETA: {eta_sec:.0f}s) | Positives: {total_positives:,} | Negatives: {total_negatives:,} | RSS: {get_current_rss_mb():.1f} MB", flush=True)
 
         del s1_chunk_df, s1_records, cands_raw
         gc.collect()
+
+        if max_train_s1 > 0 and processed_s1 >= max_train_s1:
+            break
 
     # 4. Train Final Model
     print("\n[4/4] Training Production GBDT Matcher on Mined Feature Space...", flush=True)
@@ -182,6 +206,7 @@ def train_v5_production_model(
 def main():
     parser = argparse.ArgumentParser(description="Antigravity V5 Production Model Retraining")
     parser.add_argument("--model", type=str, default="xgboost", choices=["xgboost", "lightgbm"], help="Model architecture")
+    parser.add_argument("--max-train-s1", type=int, default=100000, help="Max S1 entities to train on (default: 100,000 for fast ~1-2 min training; set 0 for all)")
     parser.add_argument("--chunk-size", type=int, default=50000, help="S1 processing chunk size")
     parser.add_argument("--negatives", type=int, default=4, help="Mined hard negatives per S1 entity")
     parser.add_argument("--workers", type=int, default=8, help="Number of CPU workers (default: 8)")
@@ -190,6 +215,7 @@ def main():
     train_v5_production_model(
         model_choice=args.model,
         s1_chunk_size=args.chunk_size,
+        max_train_s1=args.max_train_s1,
         max_negatives_per_s1=args.negatives,
         workers=args.workers
     )
