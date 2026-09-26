@@ -364,10 +364,6 @@ class ArcticGPUOrchestrator:
             print("\n" + "=" * 80)
             print(f"[Stage 2: Kaggle GPU Worker] Processing {total_chunks} chunks on remote GPU...")
             print("=" * 80)
-                print("Aborting Kaggle stage. Fix credentials or use '--skip-kaggle'.")
-                sys.exit(1)
-
-            print(f"[KaggleController] {auth_msg}")
 
             for chunk_meta in chunks:
                 chunk_id = chunk_meta["chunk_id"]
