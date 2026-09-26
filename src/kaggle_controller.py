@@ -139,7 +139,8 @@ class KaggleController:
         # Check if dataset already exists
         check_cmd = ["kaggle", "datasets", "status", self.dataset_slug]
         check_res = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
-        dataset_exists = (check_res.returncode == 0) and ("404" not in check_res.stderr.lower())
+        err_lower = (check_res.stderr or "").lower()
+        dataset_exists = (check_res.returncode == 0) and ("404" not in err_lower) and ("403" not in err_lower)
 
         if dataset_exists:
             print(f"  -> Uploading new dataset version for Chunk {chunk_id:04d}...")
