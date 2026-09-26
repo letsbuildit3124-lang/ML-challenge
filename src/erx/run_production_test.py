@@ -235,14 +235,10 @@ def run_full_test_pipeline():
     chunk_size = 50000
     for src_name, tsv_file in [("Source 2", test_s2_tsv), ("Source 3", test_s3_tsv)]:
         logger.info(f"Processing {src_name} ({tsv_file})...")
-        target_reader = pl.read_csv_batched(str(tsv_file), separator="\t", batch_size=chunk_size, truncate_ragged_lines=True)
+        batch_stream = pl.scan_csv(str(tsv_file), separator="\t", truncate_ragged_lines=True).collect_batches(chunk_size=chunk_size)
         
         chunk_idx = 0
-        while True:
-            batches = target_reader.next_batches(1)
-            if not batches:
-                break
-            batch_df = batches[0]
+        for batch_df in batch_stream:
             chunk_idx += 1
             chunk_t0 = time.time()
             
