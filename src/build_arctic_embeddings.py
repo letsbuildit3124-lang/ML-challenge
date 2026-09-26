@@ -144,7 +144,7 @@ def build_arctic_embeddings_from_duckdb(
         while offset < total_rows:
             chunk_n = min(chunk_rows, total_rows - offset)
             query = f"""
-                SELECT eid, name, norm_name, addr, norm_addr, country 
+                SELECT eid, norm_name, norm_addr, country 
                 FROM targets 
                 ORDER BY target_row_id 
                 LIMIT {chunk_n} OFFSET {offset};
@@ -154,9 +154,9 @@ def build_arctic_embeddings_from_duckdb(
             chunk_ids = []
             chunk_texts = []
             for r in rows:
-                eid, raw_name, norm_name, raw_addr, norm_addr, ctry = r
-                b_name = norm_name or raw_name or ""
-                b_addr = norm_addr or raw_addr or ""
+                eid, norm_name, norm_addr, ctry = r
+                b_name = norm_name or ""
+                b_addr = norm_addr or ""
                 b_ctry = ctry or ""
                 chunk_ids.append(eid)
                 chunk_texts.append(format_entity_text(b_name, b_addr, b_ctry))
