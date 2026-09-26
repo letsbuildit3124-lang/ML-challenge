@@ -35,6 +35,8 @@ class Config:
     model_save_path: str = os.path.join(models_dir, "lightgbm_baseline.txt")
     matching_results_path: str = os.path.join(output_dir, "matching_results.tsv")
     candidate_pairs_path: str = os.path.join(output_dir, "candidate_pairs.tsv")
+    output_matching_path: str = os.path.join(output_dir, "matching_results.tsv")
+    output_candidates_path: str = os.path.join(output_dir, "candidate_pairs.tsv")
     validator_path: str = os.path.join(utils_dir, "validate_submission.py")
 
     # Validation Split

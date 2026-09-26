@@ -95,8 +95,8 @@ def generate_v5_submission(
 
     # 2. Prepare Output Deliverable Files
     os.makedirs(config.output_dir, exist_ok=True)
-    matching_path = config.output_matching_path
-    candidate_path = config.output_candidates_path
+    matching_path = getattr(config, "output_matching_path", getattr(config, "matching_results_path", os.path.join(config.output_dir, "matching_results.tsv")))
+    candidate_path = getattr(config, "output_candidates_path", getattr(config, "candidate_pairs_path", os.path.join(config.output_dir, "candidate_pairs.tsv")))
 
     with open(matching_path, "w", encoding="utf-8") as f:
         f.write("source1_entity_id\tmatched_entity_ids\n")
@@ -110,7 +110,7 @@ def generate_v5_submission(
     # 3. Initialize V5 Retrieval Engine against Persistent DuckDB
     print("\n[Stage 1] Initializing V5 Engine against 10.32M Target Cache...", flush=True)
     engine = V5RetrievalEngine(memory_limit="8GB", threads=8, workers=workers)
-    expected_sources = [config.test_s2_path, config.test_s3_path] if (os.path.exists(config.test_s2_path) and os.path.exists(config.test_s3_path)) else None
+    expected_sources = [config.train_s2_path, config.train_s3_path] if (os.path.exists(config.train_s2_path) and os.path.exists(config.train_s3_path)) else None
     engine.indexer.ensure_cache_ready(expected_sources)
 
     # 4. Stream Test S1 in Chunks & Generate Outputs
