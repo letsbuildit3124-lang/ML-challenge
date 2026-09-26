@@ -1,0 +1,76 @@
+# Antigravity V5 Multilingual E5 GPU-First Multi-Chunk Configuration
+# Used by python3 -m src.dense_pipeline
+
+model:
+  name: "intfloat/multilingual-e5-small"
+  embedding_dim: 384
+  precision: "fp16"
+  max_length: 128
+  normalize_embeddings: true
+
+data:
+  chunk_rows: 100000
+  job_target_rows: 1000000
+  smoke_target_rows: 10000
+
+kaggle:
+  # Dedicated ER worker kernel slug on Kaggle
+  kernel: "rajeshshitap/arctic-entity-resolution-worker"
+  # Dataset slug prefix for grouped jobs (e.g. rajeshshitap/e5-group-input)
+  dataset_slug: "rajeshshitap/arctic-er-input"
+  # Accelerator choices: NvidiaL4 (recommended), NvidiaTeslaT4, NvidiaA100
+  accelerator: "NvidiaL4"
+  # Max concurrent GPU jobs (default: 1 for predictable quota management)
+  max_concurrent_jobs: 1
+  # Max time allowed in QUEUED state before cancelling and classifying as QUEUE_TIMEOUT
+  queue_timeout_seconds: 180
+  # Max allowed kernel execution time in seconds (default: 3600 = 1 hour)
+  timeout_seconds: 3600
+  # Polling interval in seconds
+  poll_interval_seconds: 15
+  # Max retry attempts for transient failures
+  max_attempts: 2
+  enable_internet: true
+
+gpu:
+  batch_size: "auto"
+  batch_candidates:
+    - 2048
+    - 1536
+    - 1024
+    - 768
+    - 512
+  allow_tf32: true
+  float32_matmul_precision: "high"
+
+storage:
+  dtype: "float16"
+
+ann:
+  type: "ivf_pq"
+  nlist: 4096
+  pq_m: 48
+  pq_nbits: 8
+  default_top_k: 50
+
+retrieval:
+  candidate_budget: 250
+  cross_country: true
+
+paths:
+  root: "cache/dense_gpu"
+  manifest: "cache/dense_gpu/manifest.json"
+  input_dir: "cache/dense_gpu/input"
+  output_dir: "cache/dense_gpu/output"
+  staging_dir: "cache/dense_gpu/staging"
+  logs_dir: "cache/dense_gpu/logs"
+  worker_src_dir: "kaggle/dense_worker"
+  production_embeddings: "cache/embeddings/multilingual_e5/production/target_embeddings.npy"
+  production_ids: "cache/embeddings/multilingual_e5/production/target_ids.json"
+  production_meta: "cache/embeddings/multilingual_e5/production/metadata.json"
+  production_ann_dir: "cache/ann/multilingual_e5/production"
+  smoke_embeddings: "cache/embeddings/multilingual_e5/smoke/target_embeddings.npy"
+  smoke_ids: "cache/embeddings/multilingual_e5/smoke/target_ids.json"
+  smoke_meta: "cache/embeddings/multilingual_e5/smoke/metadata.json"
+  smoke_ann_dir: "cache/ann/multilingual_e5/smoke"
+  report_path: "reports/v5_multilingual_e5_benchmark.md"
