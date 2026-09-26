@@ -1,0 +1,54 @@
+# Antigravity V4.1 Arctic GPU Orchestration Configuration
+# Used by python3 -m src.arctic_pipeline --gpu
+
+kaggle:
+  # Replace with your Kaggle username / kernel slug
+  kernel: "YOUR_KAGGLE_USERNAME/arctic-entity-resolution-worker"
+  # Accelerator choices: NvidiaL4 (recommended), NvidiaTeslaT4, NvidiaA100
+  accelerator: "NvidiaL4"
+  # Maximum allowed time per Kaggle kernel execution in seconds (default: 3600 = 1 hour)
+  timeout_seconds: 3600
+  # Polling interval in seconds while monitoring kernel status
+  poll_interval_seconds: 15
+  # Enable internet in Kaggle kernel for model weight download
+  enable_internet: true
+
+embedding:
+  # Challenge-permitted 384-d dense representation model
+  model_name: "themelder/arctic-embed-xs-entity-resolution"
+  dimension: 384
+  # Batch size for GPU inference on Kaggle (256-512 recommended for L4/T4)
+  batch_size: 256
+  # Use FP16 half-precision for fast GPU throughput
+  fp16: true
+  # Normalize vectors so cosine similarity is dot product
+  normalize_embeddings: true
+
+pipeline:
+  # Rows per target text chunk (100,000 = ~153.6 MB float32 output)
+  chunk_size: 100000
+  # Number of chunks processed per Kaggle job execution
+  chunks_per_job: 1
+  # Maximum retry attempts per failed chunk
+  max_retries: 3
+  # Default dense retrieval candidate budget
+  dense_top_k: 50
+  # Resume from previous checkpoint by default
+  resume: true
+
+retrieval:
+  # Master feature switch: set true once Arctic benchmark is verified
+  use_arctic: false
+
+paths:
+  root: "cache/arctic_gpu"
+  manifest: "cache/arctic_gpu/manifest.json"
+  input_dir: "cache/arctic_gpu/input"
+  output_dir: "cache/arctic_gpu/output"
+  logs_dir: "cache/arctic_gpu/logs"
+  worker_dir: "kaggle/arctic_worker"
+  merged_embeddings: "cache/embeddings/arctic/target_embeddings.npy"
+  merged_ids: "cache/embeddings/arctic/target_ids.json"
+  merged_meta: "cache/embeddings/arctic/metadata.json"
+  faiss_dir: "cache/ann/arctic"
+  report_path: "reports/arctic_gpu_benchmark.md"
