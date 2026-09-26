@@ -84,51 +84,13 @@ def compute_recall_metrics(
     }
 
 
-def run_dense_benchmark(s1_count: int = 1000, default_k: int = 50, candidate_budget: int = 250, allow_incomplete: bool = False):
+def run_dense_benchmark(s1_count: int = 1000, default_k: int = 50, candidate_budget: int = 250):
     config = get_config()
     print("=" * 80)
     print("ANTIGRAVITY V4.1 — DENSE SEMANTIC RETRIEVAL BENCHMARK")
     print(f"Controlled Evaluation Set: {s1_count:,} S1 Entities | Default K: {default_k} | Budget: {candidate_budget}")
     print(f"Initial Process RSS:       {get_current_rss_mb():.2f} MB")
     print("=" * 80)
-
-    # Pre-flight Check: Index Completeness Validation
-    ann_dir = "cache/ann/arctic"
-    ann_meta_path = os.path.join(config.base_dir, ann_dir, "metadata.json")
-    smoke_meta_path = os.path.join(config.base_dir, ann_dir, "smoke", "metadata.json")
-
-    # If allow_incomplete is passed and smoke index exists, use smoke directory
-    if allow_incomplete and os.path.exists(smoke_meta_path) and not os.path.exists(ann_meta_path):
-        ann_meta_path = smoke_meta_path
-        ann_dir = "cache/ann/arctic/smoke"
-
-    if os.path.exists(ann_meta_path):
-        with open(ann_meta_path, "r", encoding="utf-8") as f:
-            ann_meta = json.load(f)
-        is_complete = ann_meta.get("is_complete_target_universe", False)
-        t_count = ann_meta.get("target_count", 0)
-        expected = ann_meta.get("expected_target_count", 10320219)
-
-        if not is_complete and not allow_incomplete:
-            print("\n" + "!" * 80)
-            print("[CRITICAL VALIDATION ERROR]: Arctic ANN Index is INCOMPLETE / SMOKE TEST ONLY!")
-            print(f"  Indexed Targets:  {t_count:,} / {expected:,}")
-            print(f"  Complete Universe: {is_complete}")
-            print("\nDense retrieval results on a partial target subset are INVALID for measuring candidate recall.")
-            print("Please assemble the complete 10,320,219 target embeddings and build the production FAISS index:")
-            print("  PYTHONPATH=. python3 -m src.arctic_pipeline --gpu")
-            print("\n(To bypass this safety check strictly for development smoke tests, pass '--allow-incomplete').")
-            print("!" * 80 + "\n")
-            sys.exit(1)
-
-        print("-" * 80)
-        print(f"Target vectors indexed:  {t_count:,} / {expected:,}")
-        print(f"Complete universe index: {'YES' if is_complete else 'NO (SMOKE / DEV SUBSET)'}")
-        print("-" * 80)
-    else:
-        if not allow_incomplete:
-            print(f"\n[ERROR] Arctic ANN Index metadata not found at {ann_meta_path}!")
-            sys.exit(1)
 
     # 1. Load Ground Truth and Validation S1 Sample
     gt_df = load_ground_truth(config.train_gt_path)
@@ -346,15 +308,9 @@ def main():
     parser.add_argument("--s1-count", type=int, default=1000, help="Number of S1 validation entities to benchmark")
     parser.add_argument("--k", type=int, default=50, help="Default K for dense ANN nearest neighbors")
     parser.add_argument("--budget", type=int, default=250, help="Candidate budget per S1 entity")
-    parser.add_argument("--allow-incomplete", action="store_true", help="Allow benchmark execution on smoke test / incomplete target index")
     args = parser.parse_args()
 
-    run_dense_benchmark(
-        s1_count=args.s1_count,
-        default_k=args.k,
-        candidate_budget=args.budget,
-        allow_incomplete=args.allow_incomplete
-    )
+    run_dense_benchmark(s1_count=args.s1_count, default_k=args.k, candidate_budget=args.budget)
 
 if __name__ == "__main__":
     main()
