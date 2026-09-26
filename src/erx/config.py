@@ -38,8 +38,8 @@ class ERXConfig:
     tfidf_min_df: int = 2
     tfidf_top_k: int = 15
 
-    rare_token_max_posting_size: int = 25_000
-    rare_token_min_idf: float = 2.0
+    rare_token_max_posting_size: int = 500
+    rare_token_min_idf: float = 4.5
     rare_token_top_k: int = 15
 
     address_top_k: int = 10

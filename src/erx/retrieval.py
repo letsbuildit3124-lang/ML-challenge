@@ -107,15 +107,17 @@ class ERXRetrievalEngine:
         # Compute IDF for Channel C and apply posting caps
         logger.info("Computing Token IDF scores and pruning postings...")
         max_posting = self.config.rare_token_max_posting_size
+        min_idf = self.config.rare_token_min_idf if num_s1 >= 100 else 1.0
         pruned_postings = {}
         for tok, count in token_doc_freq.items():
             idf = math.log((num_s1 + 1.0) / (count + 1.0)) + 1.0
             self.token_idf[tok] = idf
-            # Cap extreme postings to prevent combinatorial explosions
-            if len(self.token_postings[tok]) <= max_posting:
-                pruned_postings[tok] = self.token_postings[tok]
-            else:
-                pruned_postings[tok] = self.token_postings[tok][:max_posting]
+            # Cap extreme postings to prevent combinatorial explosions and discard non-rare tokens
+            if idf >= min_idf:
+                if len(self.token_postings[tok]) <= max_posting:
+                    pruned_postings[tok] = self.token_postings[tok]
+                else:
+                    pruned_postings[tok] = self.token_postings[tok][:max_posting]
         self.token_postings = pruned_postings
 
         # Build Channel B: Sparse Char TF-IDF Matrix
@@ -194,9 +196,10 @@ class ERXRetrievalEngine:
         query_tokens = target.name_tok_set | target.translit_tok_set
         if query_tokens:
             token_scores: Dict[int, float] = defaultdict(float)
+            min_idf = self.config.rare_token_min_idf if len(self.s1_records) >= 100 else 1.0
             for tok in query_tokens:
                 idf = self.token_idf.get(tok, 0.0)
-                if idf >= self.config.rare_token_min_idf and tok in self.token_postings:
+                if idf >= min_idf and tok in self.token_postings:
                     for s1_id in self.token_postings[tok]:
                         token_scores[s1_id] += idf
 

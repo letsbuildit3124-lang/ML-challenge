@@ -166,6 +166,75 @@ def _init_train_target_worker(
     _WORKER_TRAIN_EXTRACTOR = extractor
 
 
+def _find_fast_hard_negatives(
+    engine: ERXRetrievalEngine,
+    target: MultiViewRecord,
+    true_s1_int: int,
+    max_negatives: int = 2,
+) -> List[CandidatePair]:
+    """
+    Finds high-quality hard negative distractors via O(1) hash collisions first.
+    Collisions on compact name, phonetic signature, house numbers, or numeric signature
+    produce the hardest distractors (e.g. same sound, same street, or similar name).
+    Falls back to retrieval only if fewer than max_negatives are found.
+    """
+    negatives: List[CandidatePair] = []
+    seen_s1: Set[int] = {true_s1_int}
+
+    # 1. Exact or compact name collision (homonyms/near-duplicates)
+    for key in (target.compact_name, target.translit_comp_name):
+        if key and key in engine.index_compact_name:
+            for cand_id in engine.index_compact_name[key]:
+                if cand_id not in seen_s1:
+                    seen_s1.add(cand_id)
+                    negatives.append(CandidatePair(target.internal_id, cand_id, 0.95, ProvenanceMask.EXACT_OR_LEARNED))
+                    if len(negatives) >= max_negatives:
+                        return negatives
+
+    # 2. Phonetic collision (sounds identical)
+    if target.name_phonetic_sig and target.name_phonetic_sig in engine.index_phonetic:
+        for cand_id in engine.index_phonetic[target.name_phonetic_sig]:
+            if cand_id not in seen_s1:
+                seen_s1.add(cand_id)
+                negatives.append(CandidatePair(target.internal_id, cand_id, 0.65, ProvenanceMask.PHONETIC))
+                if len(negatives) >= max_negatives:
+                    return negatives
+
+    # 3. House number + token collision (same street / house number)
+    if target.house_numbers and target.name_tokens:
+        first_sig = target.name_tokens[0]
+        for hn in target.house_numbers:
+            ht_key = f"{hn}:{first_sig}"
+            if ht_key in engine.index_house_token:
+                for cand_id in engine.index_house_token[ht_key]:
+                    if cand_id not in seen_s1:
+                        seen_s1.add(cand_id)
+                        negatives.append(CandidatePair(target.internal_id, cand_id, 0.75, ProvenanceMask.ADDRESS))
+                        if len(negatives) >= max_negatives:
+                            return negatives
+
+    # 4. Numeric signature collision
+    if target.numeric_signature and target.numeric_signature in engine.index_numeric_sig:
+        for cand_id in engine.index_numeric_sig[target.numeric_signature]:
+            if cand_id not in seen_s1:
+                seen_s1.add(cand_id)
+                negatives.append(CandidatePair(target.internal_id, cand_id, 0.70, ProvenanceMask.ADDRESS))
+                if len(negatives) >= max_negatives:
+                    return negatives
+
+    # 5. Fallback to general retrieval if still < max_negatives
+    if len(negatives) < max_negatives:
+        cands = engine.retrieve_for_target(target, top_k=max_negatives + 2)
+        for c in cands:
+            if c.s1_internal_id not in seen_s1:
+                seen_s1.add(c.s1_internal_id)
+                negatives.append(c)
+                if len(negatives) >= max_negatives:
+                    break
+
+    return negatives
+
+
 def _process_train_target_subbatch(
     target_items: List[Tuple[MultiViewRecord, str, bool]],  # (target, true_s1_str, is_val)
 ) -> Dict[str, Any]:
@@ -184,45 +253,29 @@ def _process_train_target_subbatch(
     val_labels_list = []
 
     for target, true_s1_str, is_val in target_items:
-        if not is_val:
-            s1_rec = _WORKER_TRAIN_S1_BY_ID.get(true_s1_str) if _WORKER_TRAIN_S1_BY_ID else None
-            if s1_rec is None or _WORKER_TRAIN_ENGINE is None or _WORKER_TRAIN_EXTRACTOR is None or _WORKER_TRAIN_S1_DICT is None:
-                continue
+        engine = _WORKER_VAL_ENGINE if is_val else _WORKER_TRAIN_ENGINE
+        s1_by_id = _WORKER_VAL_S1_BY_ID if is_val else _WORKER_TRAIN_S1_BY_ID
+        s1_dict = _WORKER_VAL_S1_DICT if is_val else _WORKER_TRAIN_S1_DICT
 
-            true_s1_int = s1_rec.internal_id
-            cands = _WORKER_TRAIN_ENGINE.retrieve_for_target(target, top_k=5)
+        s1_rec = s1_by_id.get(true_s1_str) if s1_by_id else None
+        if s1_rec is None or engine is None or _WORKER_TRAIN_EXTRACTOR is None or s1_dict is None:
+            continue
 
-            selected_cands = [CandidatePair(target.internal_id, true_s1_int, 1.0, ProvenanceMask.EXACT_OR_LEARNED)]
-            for c in cands:
-                if c.s1_internal_id != true_s1_int:
-                    selected_cands.append(c)
-                    if len(selected_cands) >= 3:  # 1 Positive + up to 2 Hard Negatives
-                        break
+        true_s1_int = s1_rec.internal_id
+        hard_negs = _find_fast_hard_negatives(engine, target, true_s1_int, max_negatives=2)
 
-            feats = _WORKER_TRAIN_EXTRACTOR.extract_features_for_target_candidates(target, selected_cands, _WORKER_TRAIN_S1_DICT)
-            for idx, c in enumerate(selected_cands):
+        # Selected candidates: Positive first (retrieval_score=1.0), then hard negatives
+        selected_cands = [CandidatePair(target.internal_id, true_s1_int, 1.0, ProvenanceMask.EXACT_OR_LEARNED)] + hard_negs
+
+        feats = _WORKER_TRAIN_EXTRACTOR.extract_features_for_target_candidates(target, selected_cands, s1_dict)
+        for idx, c in enumerate(selected_cands):
+            is_pos = (c.s1_internal_id == true_s1_int)
+            if not is_val:
                 train_feats_list.append(feats[idx])
-                train_labels_list.append(1 if c.s1_internal_id == true_s1_int else 0)
-
-        else:
-            s1_rec = _WORKER_VAL_S1_BY_ID.get(true_s1_str) if _WORKER_VAL_S1_BY_ID else None
-            if s1_rec is None or _WORKER_VAL_ENGINE is None or _WORKER_TRAIN_EXTRACTOR is None or _WORKER_VAL_S1_DICT is None:
-                continue
-
-            true_s1_int = s1_rec.internal_id
-            cands = _WORKER_VAL_ENGINE.retrieve_for_target(target, top_k=5)
-
-            selected_cands = [CandidatePair(target.internal_id, true_s1_int, 1.0, ProvenanceMask.EXACT_OR_LEARNED)]
-            for c in cands:
-                if c.s1_internal_id != true_s1_int:
-                    selected_cands.append(c)
-                    if len(selected_cands) >= 3:
-                        break
-
-            feats = _WORKER_TRAIN_EXTRACTOR.extract_features_for_target_candidates(target, selected_cands, _WORKER_VAL_S1_DICT)
-            for idx, c in enumerate(selected_cands):
+                train_labels_list.append(1 if is_pos else 0)
+            else:
                 val_feats_list.append(feats[idx])
-                val_labels_list.append(1 if c.s1_internal_id == true_s1_int else 0)
+                val_labels_list.append(1 if is_pos else 0)
 
     return {
         "train_feats": np.array(train_feats_list, dtype=np.float32) if train_feats_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
@@ -505,64 +558,69 @@ def train_full_universe_production_model(
 
         t_mine_start = time.time()
         total_streamed_targets = 0
+        total_train_pairs = 0
+        total_val_pairs = 0
 
-        for parquet_file in [train_s2_parquet, train_s3_parquet]:
-            logger.info(f"  Streaming pre-normalized targets from {parquet_file.name} across {num_workers} CPU workers...")
-            cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
+        with ProcessPoolExecutor(
+            max_workers=num_workers,
+            initializer=_init_train_target_worker,
+            initargs=(train_retrieval_engine, val_retrieval_engine, train_s1_dict, val_s1_dict, train_s1_by_id, val_s1_by_id, extractor),
+        ) as executor:
+            for parquet_file in [train_s2_parquet, train_s3_parquet]:
+                logger.info(f"  Streaming pre-normalized targets from {parquet_file.name} across {num_workers} CPU workers...")
+                cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
 
-            while True:
-                chunk_rows = cursor.fetchmany(50000)
-                if not chunk_rows:
-                    break
+                while True:
+                    chunk_rows = cursor.fetchmany(50000)
+                    if not chunk_rows:
+                        break
 
-                chunk_target_items = []
-                for r in chunk_rows:
-                    tid = r[1]
-                    if tid not in all_target_ids:
-                        continue
+                    chunk_target_items = []
+                    for r in chunk_rows:
+                        tid = r[1]
+                        if tid not in all_target_ids:
+                            continue
 
-                    target = MultiViewRecord(
-                        internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
-                        compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
-                        sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
-                        translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
-                        is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
-                    )
-                    if tid in train_target_to_s1:
-                        chunk_target_items.append((target, train_target_to_s1[tid], False))
-                    elif tid in val_target_to_s1:
-                        chunk_target_items.append((target, val_target_to_s1[tid], True))
+                        target = MultiViewRecord(
+                            internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
+                            compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
+                            sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
+                            translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
+                            is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
+                        )
+                        if tid in train_target_to_s1:
+                            chunk_target_items.append((target, train_target_to_s1[tid], False))
+                        elif tid in val_target_to_s1:
+                            chunk_target_items.append((target, val_target_to_s1[tid], True))
 
-                if chunk_target_items:
-                    sub_batch_size = max(1, math.ceil(len(chunk_target_items) / num_workers))
-                    sub_batches = [chunk_target_items[i : i + sub_batch_size] for i in range(0, len(chunk_target_items), sub_batch_size)]
+                    if chunk_target_items:
+                        sub_batch_size = max(1, math.ceil(len(chunk_target_items) / num_workers))
+                        sub_batches = [chunk_target_items[i : i + sub_batch_size] for i in range(0, len(chunk_target_items), sub_batch_size)]
 
-                    with ProcessPoolExecutor(
-                        max_workers=num_workers,
-                        initializer=_init_train_target_worker,
-                        initargs=(train_retrieval_engine, val_retrieval_engine, train_s1_dict, val_s1_dict, train_s1_by_id, val_s1_by_id, extractor),
-                    ) as executor:
                         futures = [executor.submit(_process_train_target_subbatch, sb) for sb in sub_batches]
                         for fut in as_completed(futures):
                             res = fut.result()
                             if res["train_feats"].shape[0] > 0:
                                 all_train_features.append(res["train_feats"])
                                 all_train_labels.append(res["train_labels"])
+                                total_train_pairs += res["train_feats"].shape[0]
                             if res["val_feats"].shape[0] > 0:
                                 val_features.append(res["val_feats"])
                                 val_labels.append(res["val_labels"])
+                                total_val_pairs += res["val_feats"].shape[0]
 
-                    total_streamed_targets += len(chunk_target_items)
-                    elapsed = time.time() - t_mine_start
-                    rate = total_streamed_targets / max(elapsed, 1e-4)
-                    eta_mins = ((len(all_target_ids) - total_streamed_targets) / max(rate, 1e-4)) / 60.0
-                    pct = (total_streamed_targets / len(all_target_ids)) * 100.0
-                    logger.info(
-                        f"  [Mining Progress] Processed: {total_streamed_targets:,} / {len(all_target_ids):,} targets ({pct:.1f}%) | "
-                        f"Rate: {rate:,.0f} tgts/s | ETA: {eta_mins:.1f} mins | RAM: {get_current_rss_mb():.1f} MB"
-                    )
+                        total_streamed_targets += len(chunk_target_items)
+                        elapsed = time.time() - t_mine_start
+                        rate = total_streamed_targets / max(elapsed, 1e-4)
+                        eta_mins = ((len(all_target_ids) - total_streamed_targets) / max(rate, 1e-4)) / 60.0
+                        pct = (total_streamed_targets / len(all_target_ids)) * 100.0
+                        logger.info(
+                            f"  [Mining Progress] Processed: {total_streamed_targets:,} / {len(all_target_ids):,} targets ({pct:.1f}%) | "
+                            f"Train pairs: {total_train_pairs:,} | Val pairs: {total_val_pairs:,} | "
+                            f"Rate: {rate:,.0f} tgts/s | ETA: {eta_mins:.1f} mins | RAM: {get_current_rss_mb():.1f} MB"
+                        )
 
-                del chunk_rows
+                    del chunk_rows
 
         con.close()
         if all_train_features:
@@ -717,45 +775,45 @@ def run_full_production():
     con = duckdb.connect()
     con.execute(f"PRAGMA threads={num_workers};")
 
-    for src_name, parquet_file in [("Source 2", test_s2_parquet), ("Source 3", test_s3_parquet)]:
-        logger.info(f"Streaming and evaluating {src_name} ({parquet_file.name})...")
-        cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
-        chunk_idx = 0
+    with ProcessPoolExecutor(
+        max_workers=num_workers,
+        initializer=_init_retrieval_worker,
+        initargs=(country_indexes, s1_dict, feat_extractor, num_test_s1),
+    ) as executor:
+        for src_name, parquet_file in [("Source 2", test_s2_parquet), ("Source 3", test_s3_parquet)]:
+            logger.info(f"Streaming and evaluating {src_name} ({parquet_file.name})...")
+            cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
+            chunk_idx = 0
 
-        while True:
-            chunk_rows = cursor.fetchmany(chunk_size)
-            if not chunk_rows:
-                break
+            while True:
+                chunk_rows = cursor.fetchmany(chunk_size)
+                if not chunk_rows:
+                    break
 
-            chunk_idx += 1
-            chunk_t0 = time.time()
+                chunk_idx += 1
+                chunk_t0 = time.time()
 
-            target_mvs = [
-                MultiViewRecord(
-                    internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
-                    compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
-                    sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
-                    translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
-                    is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
-                )
-                for r in chunk_rows
-            ]
+                target_mvs = [
+                    MultiViewRecord(
+                        internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
+                        compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
+                        sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
+                        translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
+                        is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
+                    )
+                    for r in chunk_rows
+                ]
 
-            # Divide chunk into sub-batches for 8 CPU worker processes
-            sub_batch_size = max(1, math.ceil(len(target_mvs) / num_workers))
-            sub_batches = [target_mvs[i : i + sub_batch_size] for i in range(0, len(target_mvs), sub_batch_size)]
+                # Divide chunk into sub-batches for 8 CPU worker processes
+                sub_batch_size = max(1, math.ceil(len(target_mvs) / num_workers))
+                sub_batches = [target_mvs[i : i + sub_batch_size] for i in range(0, len(target_mvs), sub_batch_size)]
 
-            all_tier1_matches = []
-            all_tier1_candidates = []
-            all_tier2_targets = []
-            all_tier2_cand_lists = []
-            all_tier2_features = []
+                all_tier1_matches = []
+                all_tier1_candidates = []
+                all_tier2_targets = []
+                all_tier2_cand_lists = []
+                all_tier2_features = []
 
-            with ProcessPoolExecutor(
-                max_workers=num_workers,
-                initializer=_init_retrieval_worker,
-                initargs=(country_indexes, s1_dict, feat_extractor, num_test_s1),
-            ) as executor:
                 futures = [executor.submit(_process_target_subbatch, sb) for sb in sub_batches]
                 for fut in as_completed(futures):
                     res = fut.result()
@@ -766,76 +824,76 @@ def run_full_production():
                     if res["tier2_features"].shape[0] > 0:
                         all_tier2_features.append(res["tier2_features"])
 
-            # 1. Process Tier 1 Exact Matches
-            for s1_int, tid in all_tier1_matches:
-                if s1_int < num_test_s1:
-                    s1_matches[s1_int].append(tid)
-                    tier1_exact_matches += 1
-                    total_matches_selected += 1
-
-            for s1_int, tid in all_tier1_candidates:
-                if s1_int < num_test_s1:
-                    s1_candidates[s1_int].add(tid)
-                    total_candidates_generated += 1
-
-            # 2. Process Tier 2 Fuzzy GBDT Candidates with Vectorized C++ Batch Scoring
-            if all_tier2_features:
-                X_batch = np.vstack(all_tier2_features)
-                raw_probs = trainer.model.predict(X_batch)
-                cal_probs = calibrator.predict(raw_probs)
-
-                feat_offset = 0
-                for target, cands in zip(all_tier2_targets, all_tier2_cand_lists):
-                    cand_len = len(cands)
-                    target_probs = cal_probs[feat_offset : feat_offset + cand_len]
-                    feat_offset += cand_len
-
-                    for c in cands:
-                        if c.s1_internal_id < num_test_s1:
-                            s1_candidates[c.s1_internal_id].add(target.entity_id)
-                            total_candidates_generated += 1
-
-                    best_idx = int(np.argmax(target_probs))
-                    best_prob = float(target_probs[best_idx])
-                    best_cand = cands[best_idx]
-
-                    second_best_prob = 0.0
-                    if len(target_probs) > 1:
-                        target_probs_sorted = np.sort(target_probs)
-                        second_best_prob = float(target_probs_sorted[-2])
-
-                    s1_cand_rec = s1_dict[best_cand.s1_internal_id]
-                    name_sim = fuzz.token_set_ratio(target.norm_name, s1_cand_rec.norm_name) / 100.0 if (target.norm_name and s1_cand_rec.norm_name) else 0.0
-                    addr_sim = fuzz.token_set_ratio(target.norm_addr, s1_cand_rec.norm_addr) / 100.0 if (target.norm_addr and s1_cand_rec.norm_addr) else 0.0
-
-                    threshold = config.s2_match_threshold if target.is_s2 else config.s3_match_threshold
-                    is_match = (
-                        best_prob >= threshold
-                        and (best_prob - second_best_prob >= config.margin_threshold or best_prob >= 0.85)
-                        and (name_sim >= 0.40 or addr_sim >= 0.50)
-                    )
-
-                    if is_match and best_cand.s1_internal_id < num_test_s1:
-                        s1_matches[best_cand.s1_internal_id].append(target.entity_id)
+                # 1. Process Tier 1 Exact Matches
+                for s1_int, tid in all_tier1_matches:
+                    if s1_int < num_test_s1:
+                        s1_matches[s1_int].append(tid)
+                        tier1_exact_matches += 1
                         total_matches_selected += 1
-                        tier2_fuzzy_matches += 1
 
-            total_targets_processed += len(chunk_rows)
-            chunk_time = time.time() - chunk_t0
-            rate = len(chunk_rows) / max(chunk_time, 1e-4)
-            overall_elapsed = time.time() - t0_targets
-            overall_rate = total_targets_processed / max(overall_elapsed, 1e-4)
-            remaining_targets = total_target_count - total_targets_processed
-            eta_mins = (remaining_targets / max(overall_rate, 1e-4)) / 60.0
-            pct_done = (total_targets_processed / total_target_count) * 100.0
+                for s1_int, tid in all_tier1_candidates:
+                    if s1_int < num_test_s1:
+                        s1_candidates[s1_int].add(tid)
+                        total_candidates_generated += 1
 
-            logger.info(
-                f"[{src_name}] Chunk {chunk_idx:3d} | Evaluated: {total_targets_processed:,} / {total_target_count:,} "
-                f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
-                f"Matches: {total_matches_selected:,} (T1: {tier1_exact_matches:,}, T2: {tier2_fuzzy_matches:,}) | "
-                f"RAM: {get_current_rss_mb():.1f} MB"
-            )
-            del chunk_rows
+                # 2. Process Tier 2 Fuzzy GBDT Candidates with Vectorized C++ Batch Scoring
+                if all_tier2_features:
+                    X_batch = np.vstack(all_tier2_features)
+                    raw_probs = trainer.model.predict(X_batch)
+                    cal_probs = calibrator.predict(raw_probs)
+
+                    feat_offset = 0
+                    for target, cands in zip(all_tier2_targets, all_tier2_cand_lists):
+                        cand_len = len(cands)
+                        target_probs = cal_probs[feat_offset : feat_offset + cand_len]
+                        feat_offset += cand_len
+
+                        for c in cands:
+                            if c.s1_internal_id < num_test_s1:
+                                s1_candidates[c.s1_internal_id].add(target.entity_id)
+                                total_candidates_generated += 1
+
+                        best_idx = int(np.argmax(target_probs))
+                        best_prob = float(target_probs[best_idx])
+                        best_cand = cands[best_idx]
+
+                        second_best_prob = 0.0
+                        if len(target_probs) > 1:
+                            target_probs_sorted = np.sort(target_probs)
+                            second_best_prob = float(target_probs_sorted[-2])
+
+                        s1_cand_rec = s1_dict[best_cand.s1_internal_id]
+                        name_sim = fuzz.token_set_ratio(target.norm_name, s1_cand_rec.norm_name) / 100.0 if (target.norm_name and s1_cand_rec.norm_name) else 0.0
+                        addr_sim = fuzz.token_set_ratio(target.norm_addr, s1_cand_rec.norm_addr) / 100.0 if (target.norm_addr and s1_cand_rec.norm_addr) else 0.0
+
+                        threshold = config.s2_match_threshold if target.is_s2 else config.s3_match_threshold
+                        is_match = (
+                            best_prob >= threshold
+                            and (best_prob - second_best_prob >= config.margin_threshold or best_prob >= 0.85)
+                            and (name_sim >= 0.40 or addr_sim >= 0.50)
+                        )
+
+                        if is_match and best_cand.s1_internal_id < num_test_s1:
+                            s1_matches[best_cand.s1_internal_id].append(target.entity_id)
+                            total_matches_selected += 1
+                            tier2_fuzzy_matches += 1
+
+                total_targets_processed += len(chunk_rows)
+                chunk_time = time.time() - chunk_t0
+                rate = len(chunk_rows) / max(chunk_time, 1e-4)
+                overall_elapsed = time.time() - t0_targets
+                overall_rate = total_targets_processed / max(overall_elapsed, 1e-4)
+                remaining_targets = total_target_count - total_targets_processed
+                eta_mins = (remaining_targets / max(overall_rate, 1e-4)) / 60.0
+                pct_done = (total_targets_processed / total_target_count) * 100.0
+
+                logger.info(
+                    f"[{src_name}] Chunk {chunk_idx:3d} | Evaluated: {total_targets_processed:,} / {total_target_count:,} "
+                    f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
+                    f"Matches: {total_matches_selected:,} (T1: {tier1_exact_matches:,}, T2: {tier2_fuzzy_matches:,}) | "
+                    f"RAM: {get_current_rss_mb():.1f} MB"
+                )
+                del chunk_rows
 
     con.close()
     target_stream_time = time.time() - t0_targets
