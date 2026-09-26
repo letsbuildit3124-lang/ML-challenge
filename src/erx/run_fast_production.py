@@ -132,6 +132,108 @@ def _process_target_subbatch(
     }
 
 
+# Global worker state for parallel training target feature extraction
+_WORKER_TRAIN_ENGINE: Optional[ERXRetrievalEngine] = None
+_WORKER_VAL_ENGINE: Optional[ERXRetrievalEngine] = None
+_WORKER_TRAIN_S1_DICT: Optional[Dict[int, MultiViewRecord]] = None
+_WORKER_VAL_S1_DICT: Optional[Dict[int, MultiViewRecord]] = None
+_WORKER_TRAIN_S1_BY_ID: Optional[Dict[str, MultiViewRecord]] = None
+_WORKER_VAL_S1_BY_ID: Optional[Dict[str, MultiViewRecord]] = None
+_WORKER_TRAIN_EXTRACTOR: Optional[ERXFeatureExtractor] = None
+
+
+def _init_train_target_worker(
+    train_engine: ERXRetrievalEngine,
+    val_engine: ERXRetrievalEngine,
+    train_s1_dict: Dict[int, MultiViewRecord],
+    val_s1_dict: Dict[int, MultiViewRecord],
+    train_s1_by_id: Dict[str, MultiViewRecord],
+    val_s1_by_id: Dict[str, MultiViewRecord],
+    extractor: ERXFeatureExtractor,
+):
+    """Initializes worker process with shared references for parallel training feature extraction."""
+    global _WORKER_TRAIN_ENGINE, _WORKER_VAL_ENGINE
+    global _WORKER_TRAIN_S1_DICT, _WORKER_VAL_S1_DICT
+    global _WORKER_TRAIN_S1_BY_ID, _WORKER_VAL_S1_BY_ID
+    global _WORKER_TRAIN_EXTRACTOR
+
+    _WORKER_TRAIN_ENGINE = train_engine
+    _WORKER_VAL_ENGINE = val_engine
+    _WORKER_TRAIN_S1_DICT = train_s1_dict
+    _WORKER_VAL_S1_DICT = val_s1_dict
+    _WORKER_TRAIN_S1_BY_ID = train_s1_by_id
+    _WORKER_VAL_S1_BY_ID = val_s1_by_id
+    _WORKER_TRAIN_EXTRACTOR = extractor
+
+
+def _process_train_target_subbatch(
+    target_items: List[Tuple[MultiViewRecord, str, bool]],  # (target, true_s1_str, is_val)
+) -> Dict[str, Any]:
+    """
+    Worker task: Retrieves candidates and extracts features ONLY for selected positive and hard negative pairs.
+    Runs in parallel across all 8 CPU cores.
+    """
+    global _WORKER_TRAIN_ENGINE, _WORKER_VAL_ENGINE
+    global _WORKER_TRAIN_S1_DICT, _WORKER_VAL_S1_DICT
+    global _WORKER_TRAIN_S1_BY_ID, _WORKER_VAL_S1_BY_ID
+    global _WORKER_TRAIN_EXTRACTOR
+
+    train_feats_list = []
+    train_labels_list = []
+    val_feats_list = []
+    val_labels_list = []
+
+    for target, true_s1_str, is_val in target_items:
+        if not is_val:
+            s1_rec = _WORKER_TRAIN_S1_BY_ID.get(true_s1_str) if _WORKER_TRAIN_S1_BY_ID else None
+            if s1_rec is None or _WORKER_TRAIN_ENGINE is None or _WORKER_TRAIN_EXTRACTOR is None or _WORKER_TRAIN_S1_DICT is None:
+                continue
+
+            true_s1_int = s1_rec.internal_id
+            cands = _WORKER_TRAIN_ENGINE.retrieve_for_target(target, top_k=5)
+
+            selected_cands = [CandidatePair(target.internal_id, true_s1_int, 1.0, ProvenanceMask.EXACT_OR_LEARNED)]
+            for c in cands:
+                if c.s1_internal_id != true_s1_int:
+                    selected_cands.append(c)
+                    if len(selected_cands) >= 3:  # 1 Positive + up to 2 Hard Negatives
+                        break
+
+            feats = _WORKER_TRAIN_EXTRACTOR.extract_features_for_target_candidates(target, selected_cands, _WORKER_TRAIN_S1_DICT)
+            for idx, c in enumerate(selected_cands):
+                train_feats_list.append(feats[idx])
+                train_labels_list.append(1 if c.s1_internal_id == true_s1_int else 0)
+
+        else:
+            s1_rec = _WORKER_VAL_S1_BY_ID.get(true_s1_str) if _WORKER_VAL_S1_BY_ID else None
+            if s1_rec is None or _WORKER_VAL_ENGINE is None or _WORKER_TRAIN_EXTRACTOR is None or _WORKER_VAL_S1_DICT is None:
+                continue
+
+            true_s1_int = s1_rec.internal_id
+            cands = _WORKER_VAL_ENGINE.retrieve_for_target(target, top_k=5)
+
+            selected_cands = [CandidatePair(target.internal_id, true_s1_int, 1.0, ProvenanceMask.EXACT_OR_LEARNED)]
+            for c in cands:
+                if c.s1_internal_id != true_s1_int:
+                    selected_cands.append(c)
+                    if len(selected_cands) >= 3:
+                        break
+
+            feats = _WORKER_TRAIN_EXTRACTOR.extract_features_for_target_candidates(target, selected_cands, _WORKER_VAL_S1_DICT)
+            for idx, c in enumerate(selected_cands):
+                val_feats_list.append(feats[idx])
+                val_labels_list.append(1 if c.s1_internal_id == true_s1_int else 0)
+
+    return {
+        "train_feats": np.array(train_feats_list, dtype=np.float32) if train_feats_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+        "train_labels": np.array(train_labels_list, dtype=np.int32) if train_labels_list else np.empty((0,), dtype=np.int32),
+        "val_feats": np.array(val_feats_list, dtype=np.float32) if val_feats_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+        "val_labels": np.array(val_labels_list, dtype=np.int32) if val_labels_list else np.empty((0,), dtype=np.int32),
+        "target_count": len(target_items),
+    }
+
+
+
 def ensure_normalized_parquet_table(
     tsv_path: Path,
     parquet_path: Path,
@@ -383,118 +485,108 @@ def train_full_universe_production_model(
     all_target_ids = set(train_target_to_s1.keys()) | set(val_target_to_s1.keys())
     logger.info(f"Selected {len(all_target_ids):,} representative positive targets ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val) covering 100% of matched S1 entities.")
 
-    # Read pre-normalized targets directly from Parquet tables using DuckDB C++ query
-    all_train_features = []
-    all_train_labels = []
-    val_features = []
-    val_labels = []
+    train_features_cache = cache_dir / "train_features.npz"
+    if train_features_cache.exists():
+        logger.info(f"Loading persistent cached training features from {train_features_cache}...")
+        loaded = np.load(train_features_cache)
+        X_train = loaded["X_train"]
+        y_train = loaded["y_train"]
+        X_val = loaded["X_val"]
+        y_val = loaded["y_val"]
+        logger.info(f"Loaded cached feature matrices: X_train {X_train.shape} ({int(np.sum(y_train)):,} Positives), X_val {X_val.shape} in 0.5s.")
+    else:
+        all_train_features = []
+        all_train_labels = []
+        val_features = []
+        val_labels = []
 
-    con = duckdb.connect()
-    con.execute(f"PRAGMA threads={num_workers};")
+        con = duckdb.connect()
+        con.execute(f"PRAGMA threads={num_workers};")
 
-    t_mine_start = time.time()
-    total_streamed_targets = 0
+        t_mine_start = time.time()
+        total_streamed_targets = 0
 
-    for parquet_file in [train_s2_parquet, train_s3_parquet]:
-        logger.info(f"  Streaming pre-normalized targets from {parquet_file.name}...")
-        cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
+        for parquet_file in [train_s2_parquet, train_s3_parquet]:
+            logger.info(f"  Streaming pre-normalized targets from {parquet_file.name} across {num_workers} CPU workers...")
+            cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
 
-        while True:
-            chunk_rows = cursor.fetchmany(50000)
-            if not chunk_rows:
-                break
+            while True:
+                chunk_rows = cursor.fetchmany(50000)
+                if not chunk_rows:
+                    break
 
-            for r in chunk_rows:
-                tid = r[1]
-                if tid not in all_target_ids:
-                    continue
+                chunk_target_items = []
+                for r in chunk_rows:
+                    tid = r[1]
+                    if tid not in all_target_ids:
+                        continue
 
-                target = MultiViewRecord(
-                    internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
-                    compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
-                    sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
-                    translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
-                    is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
-                )
+                    target = MultiViewRecord(
+                        internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
+                        compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
+                        sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
+                        translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
+                        is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
+                    )
+                    if tid in train_target_to_s1:
+                        chunk_target_items.append((target, train_target_to_s1[tid], False))
+                    elif tid in val_target_to_s1:
+                        chunk_target_items.append((target, val_target_to_s1[tid], True))
 
-                # Train Split Target
-                if tid in train_target_to_s1:
-                    true_s1_str = train_target_to_s1[tid]
-                    s1_rec = train_s1_by_id.get(true_s1_str)
-                    if s1_rec is not None:
-                        true_s1_int = s1_rec.internal_id
-                        cands = train_retrieval_engine.retrieve_for_target(target, top_k=15)
-                        scored_cands = list(cands)
-                        ret_s1_ints = {c.s1_internal_id for c in scored_cands}
-                        if true_s1_int not in ret_s1_ints:
-                            scored_cands.append(CandidatePair(target.internal_id, true_s1_int, 0.5, 0))
+                if chunk_target_items:
+                    sub_batch_size = max(1, math.ceil(len(chunk_target_items) / num_workers))
+                    sub_batches = [chunk_target_items[i : i + sub_batch_size] for i in range(0, len(chunk_target_items), sub_batch_size)]
 
-                        feats = extractor.extract_features_for_target_candidates(target, scored_cands, train_s1_dict)
-                        negs_added = 0
-                        for idx, cand in enumerate(scored_cands):
-                            if cand.s1_internal_id == true_s1_int:
-                                all_train_features.append(feats[idx])
-                                all_train_labels.append(1)
-                            elif negs_added < 2:
-                                all_train_features.append(feats[idx])
-                                all_train_labels.append(0)
-                                negs_added += 1
+                    with ProcessPoolExecutor(
+                        max_workers=num_workers,
+                        initializer=_init_train_target_worker,
+                        initargs=(train_retrieval_engine, val_retrieval_engine, train_s1_dict, val_s1_dict, train_s1_by_id, val_s1_by_id, extractor),
+                    ) as executor:
+                        futures = [executor.submit(_process_train_target_subbatch, sb) for sb in sub_batches]
+                        for fut in as_completed(futures):
+                            res = fut.result()
+                            if res["train_feats"].shape[0] > 0:
+                                all_train_features.append(res["train_feats"])
+                                all_train_labels.append(res["train_labels"])
+                            if res["val_feats"].shape[0] > 0:
+                                val_features.append(res["val_feats"])
+                                val_labels.append(res["val_labels"])
 
-                # Validation Split Target (Held-Out)
-                elif tid in val_target_to_s1:
-                    true_s1_str = val_target_to_s1[tid]
-                    s1_rec = val_s1_by_id.get(true_s1_str)
-                    if s1_rec is not None:
-                        true_s1_int = s1_rec.internal_id
-                        cands = val_retrieval_engine.retrieve_for_target(target, top_k=15)
-                        scored_cands = list(cands)
-                        ret_s1_ints = {c.s1_internal_id for c in scored_cands}
-                        if true_s1_int not in ret_s1_ints:
-                            scored_cands.append(CandidatePair(target.internal_id, true_s1_int, 0.5, 0))
-
-                        feats = extractor.extract_features_for_target_candidates(target, scored_cands, val_s1_dict)
-                        negs_added = 0
-                        for idx, cand in enumerate(scored_cands):
-                            if cand.s1_internal_id == true_s1_int:
-                                val_features.append(feats[idx])
-                                val_labels.append(1)
-                            elif negs_added < 2:
-                                val_features.append(feats[idx])
-                                val_labels.append(0)
-                                negs_added += 1
-
-                total_streamed_targets += 1
-                if total_streamed_targets % 50000 == 0 or total_streamed_targets >= len(all_target_ids):
+                    total_streamed_targets += len(chunk_target_items)
                     elapsed = time.time() - t_mine_start
                     rate = total_streamed_targets / max(elapsed, 1e-4)
+                    eta_mins = ((len(all_target_ids) - total_streamed_targets) / max(rate, 1e-4)) / 60.0
+                    pct = (total_streamed_targets / len(all_target_ids)) * 100.0
                     logger.info(
-                        f"  [Mining Progress] Processed: {total_streamed_targets:,} / {len(all_target_ids):,} targets | "
-                        f"Train pairs: {len(all_train_labels):,} | Val pairs: {len(val_labels):,} | "
-                        f"Rate: {rate:,.0f} tgts/s | RAM: {get_current_rss_mb():.1f} MB"
+                        f"  [Mining Progress] Processed: {total_streamed_targets:,} / {len(all_target_ids):,} targets ({pct:.1f}%) | "
+                        f"Rate: {rate:,.0f} tgts/s | ETA: {eta_mins:.1f} mins | RAM: {get_current_rss_mb():.1f} MB"
                     )
 
-            del chunk_rows
+                del chunk_rows
 
-    con.close()
-    if all_train_features:
-        X_train = np.array(all_train_features, dtype=np.float32)
-        y_train = np.array(all_train_labels, dtype=np.int32)
-    else:
-        X_train = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
-        y_train = np.empty((0,), dtype=np.int32)
+        con.close()
+        if all_train_features:
+            X_train = np.vstack(all_train_features)
+            y_train = np.concatenate(all_train_labels)
+        else:
+            X_train = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+            y_train = np.empty((0,), dtype=np.int32)
 
-    if val_features:
-        X_val = np.array(val_features, dtype=np.float32)
-        y_val = np.array(val_labels, dtype=np.int32)
-    else:
-        X_val = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
-        y_val = np.empty((0,), dtype=np.int32)
+        if val_features:
+            X_val = np.vstack(val_features)
+            y_val = np.concatenate(val_labels)
+        else:
+            X_val = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+            y_val = np.empty((0,), dtype=np.int32)
 
-    del all_train_features, all_train_labels, val_features, val_labels
-    gc.collect()
+        del all_train_features, all_train_labels, val_features, val_labels
+        gc.collect()
 
-    logger.info(f"Full Training Feature Matrix: X shape {X_train.shape} ({int(np.sum(y_train)):,} Positives, {int(len(y_train)-np.sum(y_train)):,} Negatives).")
-    logger.info(f"Validation Feature Matrix: X shape {X_val.shape} ({int(np.sum(y_val)):,} Positives, {int(len(y_val)-np.sum(y_val)):,} Negatives).")
+        logger.info(f"Saving extracted feature matrices to persistent cache: {train_features_cache}...")
+        np.savez_compressed(train_features_cache, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val)
+        logger.info(f"Full Training Feature Matrix: X shape {X_train.shape} ({int(np.sum(y_train)):,} Positives, {int(len(y_train)-np.sum(y_train)):,} Negatives).")
+        logger.info(f"Validation Feature Matrix: X shape {X_val.shape} ({int(np.sum(y_val)):,} Positives, {int(len(y_val)-np.sum(y_val)):,} Negatives).")
+
 
     # Step 8: LightGBM Training & Isotonic Calibration
     logger.info("[Step 5/5] Training Production LightGBM GBDT Model with 8 CPU threads...")
