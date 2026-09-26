@@ -80,8 +80,8 @@ def run_v3_validation(s1_eval_count: int = 2500):
     # 3. Load Targets and Pre-Index
     print("\n[2/4] Pre-indexing Target Sources in memory...", flush=True)
     t0 = time.time()
-    s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-", n_rows=250000)
-    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-", n_rows=250000)
+    s2_df = load_source_file(config.train_s2_path, expected_prefix="S2-")
+    s3_df = load_source_file(config.train_s3_path, expected_prefix="S3-")
 
     s2_p = add_v2_blocking_columns(s2_df)
     s3_p = add_v2_blocking_columns(s3_df)
