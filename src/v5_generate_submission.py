@@ -86,10 +86,11 @@ def generate_v5_submission(
     if model_path is None or not os.path.exists(model_path):
         raise FileNotFoundError(f"Could not locate trained model file! Run train_v5_production first.")
 
-    print(f"Loaded Model:         {model_path} ({selected_model_type.upper()})")
+    m_type = "lightgbm" if model_path.endswith(".txt") else "xgboost"
+    print(f"Loaded Model:         {model_path} ({m_type.upper()})")
     print(f"Decision Threshold:   {selected_threshold:.2f}")
 
-    model = get_model(selected_model_type)
+    model = get_model(m_type, config)
     model.load(model_path)
 
     # 2. Prepare Output Deliverable Files

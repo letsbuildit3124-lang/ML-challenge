@@ -33,6 +33,16 @@ class BaseERModel:
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
+    def fit(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: Optional[np.ndarray] = None,
+        y_val: Optional[np.ndarray] = None
+    ) -> Dict[str, Any]:
+        """Scikit-learn compatible fit alias."""
+        return self.train(X_train, y_train, X_val, y_val)
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
@@ -211,13 +221,15 @@ class XGBoostERModel(BaseERModel):
         print(f"[XGBoost] Loaded model from {model_path}")
 
 
-def get_model(model_type: str, config: Config) -> BaseERModel:
+def get_model(model_type: str, config: Optional[Config] = None) -> BaseERModel:
     """Factory function to instantiate models."""
+    from src.config import get_config
+    cfg = config or get_config()
     m_type = model_type.lower().strip()
     if m_type == "lightgbm":
-        return LightGBMERModel(config)
+        return LightGBMERModel(cfg)
     elif m_type == "xgboost":
-        return XGBoostERModel(config)
+        return XGBoostERModel(cfg)
     else:
         raise ValueError(f"Unknown model type: '{model_type}'. Expected 'lightgbm' or 'xgboost'.")
 

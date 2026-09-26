@@ -169,13 +169,14 @@ def run_v5_validation(
             model_path = p
             break
 
-    if model_path is None:
-        print(f"[WARN] Pretrained model not found at standard paths. Training a quick validation model...")
-        model = get_model(selected_model_type)
+    if model_path is None or not os.path.exists(model_path):
+        print(f"[WARN] Pretrained model not found. Training a quick validation model ({selected_model_type.upper()})...")
+        model = get_model(selected_model_type, config)
         model.fit(X_arr, y_arr)
     else:
-        print(f"Loading pretrained model from {model_path}...")
-        model = get_model(selected_model_type)
+        m_type = "lightgbm" if model_path.endswith(".txt") else "xgboost"
+        print(f"Loading pretrained model from {model_path} ({m_type.upper()})...")
+        model = get_model(m_type, config)
         model.load(model_path)
 
     probabilities = model.predict_proba(X_arr)
