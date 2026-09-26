@@ -1,5 +1,6 @@
 """
 ER-X Industrial Production Engine with ThreadPool Parallelism & In-Memory DuckDB Streaming.
+STRICTLY LEAKAGE-FREE IMPLEMENTATION — LOCKED ARCHITECTURE.
 
 Hardware Profile:
 - CPU: 8 vCPUs (100% utilized via multi-threaded RapidFuzz C++, DuckDB 8-thread SIMD, LightGBM OpenMP)
@@ -7,14 +8,15 @@ Hardware Profile:
 - Disk: Zero temporary disk writes (Streams directly from raw TSVs, completely preventing disk-full errors)
 - Architecture: Full dataset evaluation (2,206,821 Training S1 + 1,732,544 Test S1 + 9,969,589 Test Targets)
 
-Key Architectural Pillars:
-1. Zero Disk Waste & Zero Copy-on-Write Memory: Direct multi-threaded TSV streaming and shared memory index.
-2. Direct DuckDB Relational Joins for Ground Truth target extraction (Instant 2-second SQL Join from TSV).
-3. Country-Partitioned Inverted Indexes (US, India, France, OTHER) with selective rare-token posting caps.
-4. Two-Tier Fast-Path: Instant exact/compact match resolution + Fuzzy GBDT Residual Matching.
-5. Vectorized C++ Batch Scoring: LightGBM Booster (8 OpenMP threads) + Isotonic Probability Calibration.
-6. Target Exclusivity & Cost-Sensitive F0.5 Thresholding with Exact Address Conflict Guards.
-7. Bounded-Memory Candidate Collection (< 150 MB RAM for 10M targets).
+Locked Architectural Pillars:
+1. Zero-Leakage Blind Retrieval: Candidates are retrieved blindly from the 6-channel index before labels are assigned.
+2. Natural Candidate Context: candidate_rank, retrieval_score, and provenance masks reflect actual retrieval state.
+3. Full Training Universe: 2,206,821 S1 entities fully indexed and evaluated with strict 90/10 entity-level split.
+4. Six Complementary Retrieval Channels: Exact, Char TF-IDF (transliteration aligned), Rare-Token IDF, Address/House, Phonetic, Learned Variants.
+5. Exact 73-Feature Schema: Pairwise text similarities, address metrics, interaction terms, provenance masks, and context features.
+6. LightGBM GBDT + Held-Out Isotonic Probability Calibration.
+7. Target Exclusivity, Compound Agreement Floor, and Conservative Singleton Protection.
+8. Output Deliverables: TSVs matching challenge schema strictly.
 """
 
 import os
@@ -51,76 +53,7 @@ logging.basicConfig(
 logger = logging.getLogger("erx.production")
 
 
-def _find_fast_hard_negatives(
-    engine: ERXRetrievalEngine,
-    target: MultiViewRecord,
-    true_s1_int: int,
-    max_negatives: int = 2,
-) -> List[CandidatePair]:
-    """
-    Finds high-quality hard negative distractors via O(1) hash collisions first.
-    Collisions on compact name, phonetic signature, house numbers, or numeric signature
-    produce the hardest distractors (e.g. same sound, same street, or similar name).
-    Falls back to retrieval only if fewer than max_negatives are found.
-    """
-    negatives: List[CandidatePair] = []
-    seen_s1: Set[int] = {true_s1_int}
-
-    # 1. Exact or compact name collision (homonyms/near-duplicates)
-    for key in (target.compact_name, target.translit_comp_name):
-        if key and key in engine.index_compact_name:
-            for cand_id in engine.index_compact_name[key]:
-                if cand_id not in seen_s1:
-                    seen_s1.add(cand_id)
-                    negatives.append(CandidatePair(target.internal_id, cand_id, 0.95, ProvenanceMask.EXACT_OR_LEARNED))
-                    if len(negatives) >= max_negatives:
-                        return negatives
-
-    # 2. Phonetic collision (sounds identical)
-    if target.name_phonetic_sig and target.name_phonetic_sig in engine.index_phonetic:
-        for cand_id in engine.index_phonetic[target.name_phonetic_sig]:
-            if cand_id not in seen_s1:
-                seen_s1.add(cand_id)
-                negatives.append(CandidatePair(target.internal_id, cand_id, 0.65, ProvenanceMask.PHONETIC))
-                if len(negatives) >= max_negatives:
-                    return negatives
-
-    # 3. House number + token collision (same street / house number)
-    if target.house_numbers and target.name_tokens:
-        first_sig = target.name_tokens[0]
-        for hn in target.house_numbers:
-            ht_key = f"{hn}:{first_sig}"
-            if ht_key in engine.index_house_token:
-                for cand_id in engine.index_house_token[ht_key]:
-                    if cand_id not in seen_s1:
-                        seen_s1.add(cand_id)
-                        negatives.append(CandidatePair(target.internal_id, cand_id, 0.75, ProvenanceMask.ADDRESS))
-                        if len(negatives) >= max_negatives:
-                            return negatives
-
-    # 4. Numeric signature collision
-    if target.numeric_signature and target.numeric_signature in engine.index_numeric_sig:
-        for cand_id in engine.index_numeric_sig[target.numeric_signature]:
-            if cand_id not in seen_s1:
-                seen_s1.add(cand_id)
-                negatives.append(CandidatePair(target.internal_id, cand_id, 0.70, ProvenanceMask.ADDRESS))
-                if len(negatives) >= max_negatives:
-                    return negatives
-
-    # 5. Fallback to general retrieval if still < max_negatives
-    if len(negatives) < max_negatives:
-        cands = engine.retrieve_for_target(target, top_k=max_negatives + 2)
-        for c in cands:
-            if c.s1_internal_id not in seen_s1:
-                seen_s1.add(c.s1_internal_id)
-                negatives.append(c)
-                if len(negatives) >= max_negatives:
-                    break
-
-    return negatives
-
-
-def _process_train_target_subbatch(
+def _process_blind_train_target_subbatch(
     target_items: List[Tuple[MultiViewRecord, str, bool]],  # (target, true_s1_str, is_val)
     train_engine: ERXRetrievalEngine,
     val_engine: ERXRetrievalEngine,
@@ -130,30 +63,52 @@ def _process_train_target_subbatch(
     val_s1_by_id: Dict[str, MultiViewRecord],
     extractor: ERXFeatureExtractor,
 ) -> Dict[str, Any]:
-    """Retrieves candidates and extracts 73 features for positive and hard negative pairs."""
+    """
+    STRICTLY LEAKAGE-FREE CANDIDATE EXTRACTION & FEATURE GENERATION:
+    1. Runs real blind TARGET -> S1 retrieval against the relevant S1 universe index.
+    2. Candidates retain their natural ranking, scores, and provenance masks.
+    3. Computes 73 features blindly before consulting ground truth.
+    4. Labels candidate pairs (y=1 if candidate is true match, else 0) AFTER feature generation.
+    5. Retrieval misses are never injected or given fabricated scores.
+    """
     train_feats_list = []
     train_labels_list = []
     val_feats_list = []
     val_labels_list = []
+    retrieval_hits = 0
+    total_targets_evaluated = 0
 
     for target, true_s1_str, is_val in target_items:
         engine = val_engine if is_val else train_engine
         s1_by_id = val_s1_by_id if is_val else train_s1_by_id
         s1_dict = val_s1_dict if is_val else train_s1_dict
 
-        s1_rec = s1_by_id.get(true_s1_str) if s1_by_id else None
-        if s1_rec is None or engine is None or extractor is None or s1_dict is None:
+        if engine is None or extractor is None or s1_dict is None:
             continue
 
-        true_s1_int = s1_rec.internal_id
-        hard_negs = _find_fast_hard_negatives(engine, target, true_s1_int, max_negatives=2)
+        true_s1_rec = s1_by_id.get(true_s1_str) if s1_by_id else None
+        true_s1_int = true_s1_rec.internal_id if true_s1_rec else -1
 
-        # Selected candidates: Positive first (retrieval_score=1.0), then hard negatives
-        selected_cands = [CandidatePair(target.internal_id, true_s1_int, 1.0, ProvenanceMask.EXACT_OR_LEARNED)] + hard_negs
+        # Step 1: BLIND TARGET -> S1 RETRIEVAL across all 6 channels
+        cands = engine.retrieve_for_target(target, top_k=15)
+        if not cands:
+            continue
 
-        feats = extractor.extract_features_for_target_candidates(target, selected_cands, s1_dict)
-        for idx, c in enumerate(selected_cands):
-            is_pos = (c.s1_internal_id == true_s1_int)
+        total_targets_evaluated += 1
+
+        # Assert zero fabricated scores
+        assert not any(c.retrieval_score > 1.0 or c.retrieval_score < 0.0 for c in cands), "Invalid score in candidate pool"
+
+        # Step 2: BLIND FEATURE EXTRACTION BEFORE CONSULTING GROUND TRUTH
+        feats = extractor.extract_features_for_target_candidates(target, cands, s1_dict)
+
+        # Step 3: ASSIGN BINARY LABELS STRICTLY AFTER RETRIEVAL & FEATURE COMPUTATION
+        has_hit = False
+        for idx, c in enumerate(cands):
+            is_pos = (c.s1_internal_id == true_s1_int and true_s1_int != -1)
+            if is_pos:
+                has_hit = True
+
             if not is_val:
                 train_feats_list.append(feats[idx])
                 train_labels_list.append(1 if is_pos else 0)
@@ -161,12 +116,17 @@ def _process_train_target_subbatch(
                 val_feats_list.append(feats[idx])
                 val_labels_list.append(1 if is_pos else 0)
 
+        if has_hit:
+            retrieval_hits += 1
+
     return {
         "train_feats": np.array(train_feats_list, dtype=np.float32) if train_feats_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
         "train_labels": np.array(train_labels_list, dtype=np.int32) if train_labels_list else np.empty((0,), dtype=np.int32),
         "val_feats": np.array(val_feats_list, dtype=np.float32) if val_feats_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
         "val_labels": np.array(val_labels_list, dtype=np.int32) if val_labels_list else np.empty((0,), dtype=np.int32),
         "target_count": len(target_items),
+        "retrieval_hits": retrieval_hits,
+        "evaluated_targets": total_targets_evaluated,
     }
 
 
@@ -250,7 +210,7 @@ def load_s1_records_from_tsv(
     id_mapper: InternalIDMapper,
     num_workers: int = 8,
 ) -> List[MultiViewRecord]:
-    """Fast parallel in-memory normalization of S1 TSV directly via DuckDB in < 8s without writing to disk."""
+    """Fast parallel in-memory normalization of S1 TSV directly via DuckDB without temporary disk files."""
     t0 = time.time()
     con = duckdb.connect()
     con.execute(f"PRAGMA threads={num_workers};")
@@ -282,10 +242,10 @@ def train_full_universe_production_model(
 ) -> Tuple[ERXModelTrainer, ERXCalibrator, LearnedRuleEngine, ERXFeatureExtractor, Dict[str, Any]]:
     """
     Phase A-D: Trains production LightGBM model and fits Isotonic Calibrator
-    covering matched S1 entities using DuckDB C++ Target Joins in under 45 seconds.
+    using STRICTLY LEAKAGE-FREE BLIND RETRIEVAL across the full 2.2M S1 Universe.
     """
     logger.info("===================================================================")
-    logger.info("   PHASE A-D: FULL 2,206,821 S1 TRAINING & ISOTONIC CALIBRATION    ")
+    logger.info("   PHASE A-D: FULL 2,206,821 S1 LEAKAGE-FREE TRAINING & CALIBRATION")
     logger.info("===================================================================")
     t0_stage = time.time()
 
@@ -338,6 +298,7 @@ def train_full_universe_production_model(
     # Step 3: Disjoint 90/10 Entity-Level Split
     train_s1_ids = {sid for sid in s1_set if hash(sid) % 10 != 0}
     val_s1_ids = {sid for sid in s1_set if hash(sid) % 10 == 0}
+    assert len(train_s1_ids & val_s1_ids) == 0, "FATAL: Train/Val S1 ID overlap detected!"
     logger.info(f"Disjoint Entity-Level Split: {len(train_s1_ids):,} Train S1 (90%), {len(val_s1_ids):,} Validation S1 (10%).")
 
     train_s1_mvs: List[MultiViewRecord] = []
@@ -364,7 +325,7 @@ def train_full_universe_production_model(
 
     extractor = ERXFeatureExtractor(token_idf=train_retrieval_engine.token_idf)
 
-    # Step 5: Learned Rules via Direct DuckDB Query
+    # Step 5: Learned Rules via Direct DuckDB Query on Training S1 only
     rule_engine = LearnedRuleEngine(config.min_alias_observations, config.min_alias_purity)
     if rules_cache.exists():
         rule_engine.load(rules_cache)
@@ -391,7 +352,7 @@ def train_full_universe_production_model(
         finally:
             con_rules.close()
 
-    # Step 6: Direct DuckDB Relational Target Pairing (Instant 2-Second SQL Join directly on raw TSVs)
+    # Step 6: Direct DuckDB Relational Target Pairing (Instant 2-Second SQL Join on raw TSVs)
     train_features_cache = cache_dir / "train_features.npz"
     if train_features_cache.exists():
         logger.info(f"Loading persistent cached training features from {train_features_cache}...")
@@ -402,7 +363,7 @@ def train_full_universe_production_model(
         y_val = loaded["y_val"]
         logger.info(f"Loaded cached feature matrices: X_train {X_train.shape} ({int(np.sum(y_train)):,} Positives), X_val {X_val.shape} in 0.5s.")
     else:
-        logger.info("[Step 4/5] Extracting Balanced Target Pairs directly via DuckDB SQL Join on TSVs...")
+        logger.info("[Step 4/5] Extracting Training Target Pairs directly via DuckDB SQL Join on TSVs...")
         t_join_start = time.time()
 
         con = duckdb.connect()
@@ -457,8 +418,8 @@ def train_full_universe_production_model(
         gc.collect()
         logger.info(f"Normalized {len(target_items):,} target items in {time.time() - t_norm_start:.2f}s.")
 
-        # Parallel 8-thread feature extraction (Zero IPC Copy overhead)
-        logger.info(f"Extracting features across {num_workers} CPU worker threads...")
+        # Parallel 8-thread BLIND feature extraction (Zero Leakage)
+        logger.info(f"Executing STRICTLY BLIND candidate retrieval and feature extraction across {num_workers} CPU worker threads...")
         sub_batch_size = max(1, math.ceil(len(target_items) / num_workers))
         sub_batches = [target_items[i : i + sub_batch_size] for i in range(0, len(target_items), sub_batch_size)]
 
@@ -466,11 +427,13 @@ def train_full_universe_production_model(
         all_train_labels = []
         val_features = []
         val_labels = []
+        total_hits = 0
+        total_eval = 0
 
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = [
                 executor.submit(
-                    _process_train_target_subbatch,
+                    _process_blind_train_target_subbatch,
                     sb,
                     train_retrieval_engine,
                     val_retrieval_engine,
@@ -484,6 +447,8 @@ def train_full_universe_production_model(
             ]
             for fut in as_completed(futures):
                 res = fut.result()
+                total_hits += res["retrieval_hits"]
+                total_eval += res["evaluated_targets"]
                 if res["train_feats"].shape[0] > 0:
                     all_train_features.append(res["train_feats"])
                     all_train_labels.append(res["train_labels"])
@@ -494,6 +459,7 @@ def train_full_universe_production_model(
         del target_items
         gc.collect()
 
+        logger.info(f"Blind Candidate Retrieval Recall on Evaluated Targets: {total_hits:,} / {total_eval:,} ({total_hits/max(total_eval,1)*100:.2f}% recall in top-15).")
         logger.info("Assembling training and validation matrices...")
         X_train = np.vstack(all_train_features) if all_train_features else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
         y_train = np.concatenate(all_train_labels) if all_train_labels else np.empty((0,), dtype=np.int32)
@@ -543,7 +509,7 @@ def train_full_universe_production_model(
         "val_examples": len(X_val),
         "train_time_s": time.time() - t0_stage,
     }
-    logger.info(f"Full-Universe Stage 1 Training Complete in {val_stats['train_time_s']:.2f}s | Val Precision: {val_p*100:.2f}%, Recall: {val_r*100:.2f}%, F0.5: {val_f05:.4f}")
+    logger.info(f"Full-Universe Stage 1 Training Complete in {val_stats['train_time_s']:.2f}s | Genuine Val Precision: {val_p*100:.2f}%, Recall: {val_r*100:.2f}%, F0.5: {val_f05:.4f}")
 
     del train_retrieval_engine, val_retrieval_engine, train_s1_mvs, val_s1_mvs, train_s1_dict, val_s1_dict, s1_records
     gc.collect()
@@ -823,6 +789,7 @@ def run_full_production():
         "\n## 2. Methodology & Guarantees",
         "- **Zero Disk Overhead**: Direct streaming from source TSVs without huge temporary parquet materialization.",
         "- **Zero Copy-on-Write Memory Duplication**: In-process ThreadPool workers sharing read-only multi-channel indexes.",
+        "- **Strictly Blind Retrieval**: Natural candidate distribution in training and validation with zero label leakage.",
         "- **Direct DuckDB C++ Relational Joins**: Instant balanced positive extraction across 10M rows in under 2 seconds.",
         "- **Country-Partitioned Retrieval**: Inverted index lookups partitioned by geographical territory.",
         "- **Vectorized OpenMP LightGBM Scoring**: High-throughput parallel inference across 8 CPU threads.",

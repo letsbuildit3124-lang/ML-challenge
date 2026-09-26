@@ -17,6 +17,7 @@ class ERXConfig:
     base_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2])
     data_dir: Path = field(default_factory=lambda: Path("dataset"))
     cache_dir: Path = field(default_factory=lambda: Path("cache/erx"))
+    artifacts_dir: Path = field(default_factory=lambda: Path("artifacts/erx"))
     reports_dir: Path = field(default_factory=lambda: Path("reports"))
     output_dir: Path = field(default_factory=lambda: Path("output"))
 
@@ -81,6 +82,9 @@ class ERXConfig:
     def ensure_directories(self) -> None:
         """Creates all required directories safely."""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (self.artifacts_dir / "dev").mkdir(parents=True, exist_ok=True)
+        (self.artifacts_dir / "final").mkdir(parents=True, exist_ok=True)
         (self.cache_dir / "indexes").mkdir(parents=True, exist_ok=True)
         (self.cache_dir / "candidates").mkdir(parents=True, exist_ok=True)
         (self.cache_dir / "models").mkdir(parents=True, exist_ok=True)
