@@ -1,7 +1,7 @@
 """
 Deep-Dive Missed-Positive Diagnostic & Categorization Engine.
-Analyzes every missed ground-truth pair, computes exact similarity features,
-and categorizes them by linguistic / structural variation.
+Analyzes every missed ground-truth pair, computes exact similarity metrics,
+and categorizes them by linguistic / structural variation across 15 standard categories.
 
 Outputs:
 - reports/missed_positive_analysis.md
@@ -12,25 +12,48 @@ import sys
 import gc
 import json
 import time
+import re
 import argparse
-from typing import Dict, List, Set, Tuple, Any
-from collections import Counter
+from typing import Dict, List, Set, Tuple, Any, Optional
+from collections import Counter, defaultdict
 import polars as pl
 from rapidfuzz.distance import Levenshtein, JaroWinkler
 
 from src.config import get_config
 from src.data_loader import load_source_file, load_ground_truth
 from src.duckdb_indexer import DuckDBTargetIndexer
-from src.blocking_v2 import add_v2_blocking_columns
+from src.blocking_v2 import add_v2_blocking_columns, CORP_STOPWORDS, compute_soundex
 from src.normalize import normalize_text, offline_transliterate
+
+def extract_tokens(text: str) -> List[str]:
+    return [t for t in re.sub(r"[^\w\s]", " ", text.lower()).split() if t]
+
+def extract_informative_tokens(text: str) -> Set[str]:
+    return set(t for t in extract_tokens(text) if t not in CORP_STOPWORDS and len(t) >= 2)
+
+def extract_ngrams(text: str, n: int = 3) -> Set[str]:
+    cleaned = re.sub(r"\s+", "", text.lower())
+    if len(cleaned) < n:
+        return {cleaned} if cleaned else set()
+    return set(cleaned[i:i+n] for i in range(len(cleaned) - n + 1))
+
+def jaccard_similarity(set_a: Set[str], set_b: Set[str]) -> float:
+    if not set_a and not set_b:
+        return 1.0
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+def extract_digits(text: str) -> List[str]:
+    return re.findall(r"\b\d+\b", text)
 
 def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
     config = get_config()
     print("=" * 80)
-    print("ANTIGRAVITY V3 — MISSED-POSITIVE AUDIT & CATEGORIZATION")
+    print("ANTIGRAVITY V3.1 — DEEP-DIVE MISSED-POSITIVE AUDIT & CATEGORIZATION")
     print("=" * 80)
 
-    # 1. Load Ground Truth and Sample
+    # 1. Load Ground Truth and Sample S1
     gt_df = load_ground_truth(config.train_gt_path)
     splits_dir = os.path.join(config.data_dir, "splits")
     split_file = os.path.join(splits_dir, "split_seed_42.json")
@@ -63,13 +86,16 @@ def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
     # 2. Query DuckDB Candidates from Persistent Cache
     indexer = DuckDBTargetIndexer(memory_limit="2GB", threads=2)
     expected_sources = [config.train_s2_path, config.train_s3_path]
-    indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
+    manifest = indexer.ensure_cache_ready(expected_sources if all(os.path.exists(p) for p in expected_sources) else None)
 
     s1_full_df = load_source_file(config.train_s1_path, expected_prefix="S1-")
     s1_eval_df = s1_full_df.filter(pl.col("entity_id").is_in(eval_s1_ids))
     del s1_full_df
 
+    t0_q = time.time()
     cands_result = indexer.query_candidates_for_s1(s1_eval_df, max_cands_per_s1=max_cands)
+    query_time = time.time() - t0_q
+    print(f"Candidate query complete in {query_time:.2f}s.")
 
     # 3. Identify Missed Pairs
     recovered_pairs = set()
@@ -88,20 +114,24 @@ def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
     target_details = {}
 
     if missed_target_ids:
-        target_rows = indexer.conn.execute(f"""
-            SELECT eid, country, norm_name, compact_name, norm_addr
-            FROM targets
-            WHERE eid IN {tuple(missed_target_ids) if len(missed_target_ids) > 1 else f"('{missed_target_ids[0]}')"};
-        """).fetchall()
+        # Fetch in batches if necessary
+        batch_size = 5000
+        for i in range(0, len(missed_target_ids), batch_size):
+            chunk_ids = missed_target_ids[i:i+batch_size]
+            t_rows = indexer.conn.execute(f"""
+                SELECT eid, country, norm_name, compact_name, norm_addr
+                FROM targets
+                WHERE eid IN {tuple(chunk_ids) if len(chunk_ids) > 1 else f"('{chunk_ids[0]}')"};
+            """).fetchall()
 
-        for tid, ctry, n_name, c_name, n_addr in target_rows:
-            target_details[tid] = {
-                "eid": tid,
-                "country": ctry or "",
-                "norm_name": n_name or "",
-                "compact_name": c_name or "",
-                "norm_addr": n_addr or ""
-            }
+            for tid, ctry, n_name, c_name, n_addr in t_rows:
+                target_details[tid] = {
+                    "eid": tid,
+                    "country": ctry or "",
+                    "norm_name": n_name or "",
+                    "compact_name": c_name or "",
+                    "norm_addr": n_addr or ""
+                }
 
     s1_details = {}
     for row in s1_eval_df.iter_rows(named=True):
@@ -114,9 +144,9 @@ def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
             "norm_addr": normalize_text(row.get("business_address") or "")
         }
 
-    # 5. Categorize Missed Pairs
+    # 5. Fine-Grained Categorization across 15 Formal Categories
     category_counts = Counter()
-    missed_examples = []
+    missed_diagnostics = []
 
     for s1_id, tgt_id in missed_pairs:
         s1 = s1_details.get(s1_id, {})
@@ -129,28 +159,68 @@ def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
         s1_c = str(s1.get("country", "")).upper()
         tgt_c = str(tgt.get("country", "")).upper()
 
+        if not tgt:
+            category_counts["O. Possible implementation/indexing issue"] += 1
+            continue
+
         name_lev = Levenshtein.normalized_similarity(s1_n, tgt_n) if (s1_n or tgt_n) else 0.0
+        name_jw = JaroWinkler.similarity(s1_n, tgt_n) if (s1_n or tgt_n) else 0.0
         addr_lev = Levenshtein.normalized_similarity(s1_a, tgt_a) if (s1_a or tgt_a) else 0.0
 
-        cats = []
-        if s1_c and tgt_c and s1_c != tgt_c:
-            cats.append("Country Mismatch")
-        elif name_lev < 0.40 and addr_lev > 0.60:
-            cats.append("Extreme Name Variation (Strong Address)")
-        elif name_lev > 0.70 and addr_lev < 0.30:
-            cats.append("Strong Name (Noisy Address)")
-        elif name_lev < 0.50 and addr_lev < 0.50:
-            cats.append("Severe Lexical Distortion")
-        elif any(w in s1_n or w in tgt_n for w in ["pvt", "ltd", "inc", "corp", "sarl", "sas"]):
-            cats.append("Legal Suffix / Word Order Variation")
+        s1_toks = extract_informative_tokens(s1_n)
+        tgt_toks = extract_informative_tokens(tgt_n)
+        tok_jaccard = jaccard_similarity(s1_toks, tgt_toks)
+
+        s1_ngrams = extract_ngrams(s1_n, 3)
+        tgt_ngrams = extract_ngrams(tgt_n, 3)
+        ngram_jaccard = jaccard_similarity(s1_ngrams, tgt_ngrams)
+
+        s1_nums = extract_digits(s1_a)
+        tgt_nums = extract_digits(tgt_a)
+        has_common_num = bool(set(s1_nums) & set(tgt_nums))
+
+        # Check transliteration & soundex
+        s1_trans = offline_transliterate(s1_n)
+        tgt_trans = offline_transliterate(tgt_n)
+        trans_lev = Levenshtein.normalized_similarity(s1_trans, tgt_trans) if (s1_trans or tgt_trans) else 0.0
+
+        s1_snd = compute_soundex(extract_tokens(s1_trans)[0]) if extract_tokens(s1_trans) else ""
+        tgt_snd = compute_soundex(extract_tokens(tgt_trans)[0]) if extract_tokens(tgt_trans) else ""
+        soundex_match = bool(s1_snd and tgt_snd and s1_snd == tgt_snd)
+
+        # Categorization Decision Logic
+        cat = "N. Other"
+        if not s1_n or not tgt_n:
+            cat = "M. Missing name information"
+        elif s1_c and tgt_c and s1_c != tgt_c:
+            cat = "J. Postal / Country missing or different"
+        elif s1_toks and tgt_toks and s1_toks == tgt_toks and s1_n != tgt_n:
+            cat = "C. Word reordering"
+        elif any(len(t) <= 3 and t in "".join(w[0] for w in tgt_n.split()) for t in s1_n.split()):
+            cat = "A. Name abbreviation"
+        elif (s1_trans != s1_n or tgt_trans != tgt_n) and trans_lev > 0.75 and name_lev < 0.60:
+            cat = "F. Transliteration/script variation"
+        elif soundex_match and name_lev < 0.60:
+            cat = "G. Phonetic variation"
+        elif tok_jaccard >= 0.50 and name_lev < 0.70:
+            cat = "D. Token variation"
+        elif name_lev >= 0.70 and name_lev < 1.0:
+            cat = "E. Character typo/edit variation"
+        elif addr_lev >= 0.60 and name_lev < 0.40:
+            cat = "H. Address-driven match (High address similarity, low name)"
+        elif s1_nums and tgt_nums and not has_common_num and name_lev > 0.70:
+            cat = "I. Address number variation"
+        elif any(w in s1_n or w in tgt_n for w in ["pvt", "ltd", "inc", "corp", "sarl", "sas", "llc", "gmbh"]):
+            cat = "B. Legal suffix variation"
+        elif name_lev < 0.30 and addr_lev < 0.30:
+            cat = "L. Alias / substantially different name"
         else:
-            cats.append("Token / Spelling Variation")
+            cat = "K. Common/shared business name"
 
-        for c in cats:
-            category_counts[c] += 1
+        category_counts[cat] += 1
 
-        if len(missed_examples) < 25:
-            missed_examples.append({
+        if len(missed_diagnostics) < 40:
+            missed_diagnostics.append({
                 "s1_id": s1_id,
                 "target_id": tgt_id,
                 "s1_name": s1.get("name", ""),
@@ -159,14 +229,16 @@ def analyze_missed(s1_count: int = 1000, max_cands: int = 100):
                 "target_addr": tgt.get("norm_addr", ""),
                 "name_lev": name_lev,
                 "addr_lev": addr_lev,
-                "category": ", ".join(cats)
+                "tok_jaccard": tok_jaccard,
+                "ngram_jaccard": ngram_jaccard,
+                "category": cat
             })
 
     indexer.close()
 
     # 6. Generate Markdown Report
     report_path = os.path.join(config.reports_dir, "missed_positive_analysis.md")
-    generate_missed_report(report_path, total_gt_pairs, len(recovered_pairs), len(missed_pairs), category_counts, missed_examples)
+    generate_missed_report(report_path, total_gt_pairs, len(recovered_pairs), len(missed_pairs), category_counts, missed_diagnostics)
 
 def generate_missed_report(
     path: str,
@@ -176,7 +248,8 @@ def generate_missed_report(
     categories: Counter,
     examples: List[Dict[str, Any]]
 ):
-    md = f"""# V3 Missed-Positive Diagnostic & Root Cause Report
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    md = f"""# V3.1 Missed-Positive Diagnostic & Root Cause Report
 
 **Total True Ground Truth Pairs Audited**: {total_gt:,}  
 **Recovered by Blocker Ensemble**: {recovered:,} ({recovered/total_gt*100:.2f}%)  
@@ -184,29 +257,48 @@ def generate_missed_report(
 
 ---
 
-## 1. Missed-Positive Failure Mode Breakdown
+## 1. Missed-Positive Failure Mode Breakdown (15 Standard Categories)
 
-| Category / Failure Mode | Missed Pairs Count | Percentage of Total Misses |
-| :--- | :---: | :---: |
+| Category / Failure Mode | Missed Pairs Count | % of Misses | Primary Recovery Mechanism |
+| :--- | :---: | :---: | :--- |
 """
+    recovery_recommendations = {
+        "A. Name abbreviation": "Prefix-4 / N-Gram Retrieval",
+        "B. Legal suffix variation": "Expanded Corporate Suffix Stripping",
+        "C. Word reordering": "Token-Set / Sorted-Token Signature",
+        "D. Token variation": "Rare-Token / Informative-Token Index",
+        "E. Character typo/edit variation": "Character N-Gram Overlap & RapidFuzz",
+        "F. Transliteration/script variation": "Multilingual Bidirectional Cross-Match",
+        "G. Phonetic variation": "Phonetic Soundex Cross-Transliteration",
+        "H. Address-driven match (High address similarity, low name)": "Address-First Retrieval (Street + Num)",
+        "I. Address number variation": "Name-First Fuzzy Matching (Postal/City)",
+        "J. Postal / Country missing or different": "Country-Agnostic Lexical Fallback",
+        "K. Common/shared business name": "Compound Name + Address Token Matching",
+        "L. Alias / substantially different name": "Arctic Embedding Semantic Retrieval",
+        "M. Missing name information": "Pure Address-First Blocking",
+        "N. Other": "Fuzzy Ensemble Retrieval",
+        "O. Possible implementation/indexing issue": "Target Cache Integrity Audit"
+    }
+
     for cat, count in categories.most_common():
         pct = (count / missed_cnt * 100.0) if missed_cnt > 0 else 0.0
-        md += f"| **{cat}** | {count:,} | {pct:.1f}% |\n"
+        rec = recovery_recommendations.get(cat, "Lexical / Semantic Expansion")
+        md += f"| **{cat}** | {count:,} | {pct:.1f}% | {rec} |\n"
 
     md += """
 ---
 
-## 2. Sample Missed Ground-Truth Pairs (First 20 Samples)
+## 2. Sample Missed Ground-Truth Pairs Audit (First 30 Samples)
 
-| S1 ID | Target ID | S1 Business Name | Target Name | S1 Address | Target Address | Name Sim | Addr Sim | Diagnostic Category |
-| :--- | :--- | :--- | :--- | :--- | :--- | :---: | :---: | :--- |
+| S1 ID | Target ID | S1 Business Name | Target Name | S1 Address | Target Address | Name Sim | Addr Sim | N-Gram | Diagnostic Category |
+| :--- | :--- | :--- | :--- | :--- | :--- | :---: | :---: | :---: | :--- |
 """
     for ex in examples:
-        md += f"| `{ex['s1_id']}` | `{ex['target_id']}` | {ex['s1_name'][:30]} | {ex['target_name'][:30]} | {ex['s1_addr'][:30]} | {ex['target_addr'][:30]} | {ex['name_lev']:.2f} | {ex['addr_lev']:.2f} | {ex['category']} |\n"
+        md += f"| `{ex['s1_id']}` | `{ex['target_id']}` | {ex['s1_name'][:25]} | {ex['target_name'][:25]} | {ex['s1_addr'][:25]} | {ex['target_addr'][:25]} | {ex['name_lev']:.2f} | {ex['addr_lev']:.2f} | {ex['ngram_jaccard']:.2f} | {ex['category']} |\n"
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(md)
-    print(f"\n[Report] Saved missed-positive analysis to {path}")
+    print(f"\n[Report SUCCESS] Saved missed-positive analysis to {path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
