@@ -61,7 +61,7 @@ class ERXRetrievalEngine:
         names_for_tfidf: List[str] = []
         self.s1_id_order = []
 
-        for rec in s1_records:
+        for idx, rec in enumerate(s1_records, 1):
             s1_id = rec.internal_id
             self.s1_records[s1_id] = rec
             self.s1_id_order.append(s1_id)
@@ -100,6 +100,9 @@ class ERXRetrievalEngine:
 
             # Channel B text collection
             names_for_tfidf.append(rec.norm_name if rec.norm_name else "empty")
+
+            if idx % 300000 == 0 or idx == num_s1:
+                logger.info(f"  -> Inverted channels indexed: {idx:,} / {num_s1:,} records ({idx/num_s1*100:.1f}%)...")
 
         # Compute IDF for Channel C and apply posting caps
         logger.info("Computing Token IDF scores and pruning postings...")

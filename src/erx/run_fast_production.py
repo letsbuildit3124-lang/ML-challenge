@@ -1,19 +1,19 @@
 """
-ER-X High-Performance Full-Universe Production Engine.
+ER-X Ultra-Fast Full-Universe Production Engine (Optimized for 4 vCPU | 16 GB RAM).
 
-Hardware Profile:
-- CPU: 8 vCPUs (Fully utilized via multiprocessing and vectorized C++ operations)
-- RAM: 32 GB (Target working memory 20-24 GB, safe bounded memory headroom)
+System Profile:
+- CPU: 4 vCPUs (100% utilized via multi-processing and vectorized C++ operations)
+- RAM: 16 GB (Target working memory 6-10 GB, strict bounded memory headroom)
 - Architecture: 100% full dataset evaluation (2,206,821 Training S1 + 1,732,544 Test S1 + 9,969,589 Test Targets)
 
 Key Optimizations:
-1. Full 2.2M S1 Training Pool with Entity-Level 90/10 Disjoint Split (Zero 100K shortcuts).
+1. Multi-Process Chunked Parallel Normalization with live real-time progress logging.
 2. Country-Partitioned Multi-Channel Inverted Indexes (US, India, France, OTHER) built ONCE per fold/dataset.
-3. Persistent Disk Caching for Normalized Records, Learned Rules, and Models with Validation Fingerprinting.
+3. Persistent Disk Caching for Normalized Records, Learned Rules, and Models.
 4. Two-Tier Fast-Path (Instant Exact/Compact Name Resolution + Fuzzy GBDT Residual Matching).
-5. Parallelized Multi-Process Target Retrieval & 73-Feature Extraction (Utilizing all 8 CPU Cores).
+5. Parallel Multi-Process Target Retrieval & 73-Feature Extraction (Utilizing all 4 CPU Cores).
 6. Vectorized C++ Batch Scoring (LightGBM Booster + Isotonic Probability Calibration).
-7. Single-Pass Streaming Output Generation for `matching_results.tsv` and `candidate_pairs.tsv`.
+7. Live Real-Time Monitoring & ETAs for every stage.
 """
 
 import os
@@ -76,7 +76,7 @@ def _process_target_subbatch(
 ) -> Dict[str, Any]:
     """
     Worker task: Processes a sub-batch of targets using Tier 1 Fast-Path + Tier 2 Retrieval + Feature Extraction.
-    Runs entirely in parallel across all 8 CPU cores.
+    Runs in parallel across all CPU cores.
     """
     global _WORKER_COUNTRY_INDEXES, _WORKER_S1_DICT, _WORKER_FEATURE_EXTRACTOR, _WORKER_NUM_S1
     country_indexes = _WORKER_COUNTRY_INDEXES
@@ -135,16 +135,27 @@ def _process_target_subbatch(
     }
 
 
+def _normalize_raw_subchunk(args: Tuple[List[Tuple[str, str, str, str]], int, Optional[Dict[str, str]]]) -> List[MultiViewRecord]:
+    """Helper worker to normalize a chunk of raw rows."""
+    rows, start_idx, learned_aliases = args
+    normalizer = ERXNormalizer(learned_aliases=learned_aliases)
+    chunk_records = []
+    for offset, r in enumerate(rows):
+        int_id = start_idx + offset
+        chunk_records.append(normalizer.normalize_record(int_id, r[0], r[1], r[2], r[3]))
+    return chunk_records
+
+
 def get_cached_normalized_records(
     cache_path: Path,
     source_tsv: Path,
     normalizer: ERXNormalizer,
     id_mapper: InternalIDMapper,
-    num_workers: int = 8,
+    num_workers: int = 4,
 ) -> List[MultiViewRecord]:
     """
     Loads normalized records from persistent disk cache if available;
-    otherwise normalizes using DuckDB + parallel processing and caches to disk.
+    otherwise normalizes using parallel chunked multiprocessing with live progress updates.
     """
     if cache_path.exists():
         logger.info(f"Loading normalized records from persistent cache: {cache_path}...")
@@ -159,42 +170,73 @@ def get_cached_normalized_records(
     logger.info(f"Normalizing records from {source_tsv} (Cache miss: {cache_path})...")
     t0 = time.time()
     con = duckdb.connect()
+    con.execute("PRAGMA threads=4;")
     rows = con.execute(
         f"SELECT entity_id, business_name, business_address, country FROM read_csv_auto('{source_tsv}', sep='\\t', header=True)"
     ).fetchall()
     total = len(rows)
-    logger.info(f"Loaded {total:,} raw records from disk in {time.time() - t0:.2f}s. Normalizing...")
+    logger.info(f"Loaded {total:,} raw records from disk in {time.time() - t0:.2f}s. Normalizing across {num_workers} CPU workers...")
 
-    records = []
+    # Populate id_mapper upfront
     for r in rows:
-        sid, bname, baddr, ctry = r[0], r[1], r[2], r[3]
-        int_id = id_mapper.get_or_add(sid)
-        records.append(normalizer.normalize_record(int_id, sid, bname, baddr, ctry))
+        id_mapper.get_or_add(r[0])
 
-    del rows
+    # Parallel chunked normalization with live progress
+    chunk_size = 25000
+    chunk_tasks = []
+    for i in range(0, total, chunk_size):
+        chunk_rows = rows[i : i + chunk_size]
+        chunk_tasks.append((chunk_rows, i, normalizer.learned_aliases))
+
+    records: List[MultiViewRecord] = []
+    done_records = 0
+    t_norm_start = time.time()
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {executor.submit(_normalize_raw_subchunk, task): len(task[0]) for task in chunk_tasks}
+        for fut in as_completed(futures):
+            chunk_recs = fut.result()
+            records.extend(chunk_recs)
+            done_records += len(chunk_recs)
+            if done_records % 100000 < chunk_size or done_records == total:
+                elapsed = time.time() - t_norm_start
+                rate = done_records / max(elapsed, 1e-4)
+                pct = (done_records / total) * 100.0
+                eta_s = (total - done_records) / max(rate, 1e-4)
+                logger.info(
+                    f"  [Progress] Normalized: {done_records:,} / {total:,} ({pct:.1f}%) | "
+                    f"Rate: {rate:,.0f} recs/s | ETA: {eta_s:.1f}s | RAM: {get_current_rss_mb():.1f} MB"
+                )
+
+    # Sort records by internal_id to guarantee deterministic order
+    records.sort(key=lambda r: r.internal_id)
+    del rows, chunk_tasks
     gc.collect()
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving {len(records):,} normalized records to cache: {cache_path}...")
+    t_save = time.time()
     with open(cache_path, "wb") as f:
         pickle.dump(records, f, protocol=pickle.HIGHEST_PROTOCOL)
-    logger.info(f"Normalization & caching completed in {time.time() - t0:.2f}s.")
+    logger.info(f"Normalization & caching completed in {time.time() - t0:.2f}s (Disk write: {time.time() - t_save:.2f}s, RAM: {get_current_rss_mb():.1f} MB).")
     return records
 
 
 def train_full_universe_production_model(
     config: ERXConfig,
+    num_workers: int = 4,
 ) -> Tuple[ERXModelTrainer, ERXCalibrator, LearnedRuleEngine, ERXFeatureExtractor, Dict[str, Any]]:
     """
     Phase A, B, C, D:
     Trains production LightGBM model and fits Isotonic Calibrator using the FULL 2,206,821 Training S1 Universe.
-    Strict 90/10 entity-level disjoint split with zero leakage.
+    Strict 90/10 entity-level disjoint split with zero leakage and real-time live monitoring.
     """
     logger.info("===================================================================")
     logger.info("   PHASE A-D: FULL 2,206,821 S1 TRAINING & ISOTONIC CALIBRATION    ")
     logger.info("===================================================================")
     t0_stage = time.time()
     con = duckdb.connect()
+    con.execute("PRAGMA threads=4;")
 
     s1_tsv = config.data_dir / "train" / "train_source1.tsv"
     gt_tsv = config.data_dir / "train" / "train_ground_truth.tsv"
@@ -211,13 +253,14 @@ def train_full_universe_production_model(
     id_mapper = InternalIDMapper()
     normalizer = ERXNormalizer()
 
-    # Load Full 2,206,821 Training S1 Records
-    s1_records = get_cached_normalized_records(train_s1_cache, s1_tsv, normalizer, id_mapper, num_workers=config.rapidfuzz_workers)
+    # Step 1: Load Full 2,206,821 Training S1 Records
+    logger.info("[Step 1/5] Ingesting & Normalizing Full 2,206,821 Training S1 records...")
+    s1_records = get_cached_normalized_records(train_s1_cache, s1_tsv, normalizer, id_mapper, num_workers=num_workers)
     total_train_s1 = len(s1_records)
-    logger.info(f"Full Training Universe: {total_train_s1:,} S1 entities loaded.")
+    logger.info(f"Full Training Universe: {total_train_s1:,} S1 entities ready.")
 
-    # Load Full Ground Truth
-    logger.info("Loading full Ground Truth links...")
+    # Step 2: Load Full Ground Truth
+    logger.info("[Step 2/5] Ingesting Full Ground Truth links...")
     gt_rows = con.execute(f"SELECT source1_entity_id, matched_entity_ids FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)").fetchall()
     gt_map: Dict[str, List[str]] = {}
     total_pos_links = 0
@@ -239,8 +282,7 @@ def train_full_universe_production_model(
 
     del gt_rows
     gc.collect()
-
-    logger.info(f"Ground Truth Statistics: {s1_with_matches:,} S1 with matches ({total_pos_links:,} positive links), {singletons:,} singletons.")
+    logger.info(f"Ground Truth Loaded: {s1_with_matches:,} Matched S1 ({total_pos_links:,} positive links), {singletons:,} Singletons.")
 
     # Entity-Level Split: 90% Train, 10% Validation (Deterministic Hash, Zero S1 Leakage)
     train_s1_ids = {sid for sid in s1_set if hash(sid) % 10 != 0}
@@ -258,8 +300,8 @@ def train_full_universe_production_model(
     train_s1_dict = {m.internal_id: m for m in train_s1_mvs}
     val_s1_dict = {m.internal_id: m for m in val_s1_mvs}
 
-    # Index Full Train S1 (1.98M) and Val S1 (220K) ONCE across 6 Channels
-    logger.info(f"Building Full Multi-Channel Retrieval Index for {len(train_s1_mvs):,} Training S1 entities...")
+    # Step 3: Index Full Train S1 (1.98M) and Val S1 (220K) ONCE across 6 Channels
+    logger.info(f"[Step 3/5] Building Full Multi-Channel Retrieval Index for {len(train_s1_mvs):,} Training S1 entities...")
     train_retrieval_engine = ERXRetrievalEngine(config)
     train_retrieval_engine.index_s1(train_s1_mvs)
 
@@ -275,7 +317,6 @@ def train_full_universe_production_model(
         rule_engine.load(rules_cache)
     else:
         logger.info("Mining learned normalization rules from training positive pairs...")
-        # Collect sample of positive pairs from train fold
         train_pairs_for_rules = []
         for sid in list(train_s1_ids)[:200000]:
             t_list = gt_map.get(sid, [])
@@ -287,7 +328,7 @@ def train_full_universe_production_model(
         rule_engine.learn_from_pairs(train_pairs_for_rules)
         rule_engine.save(rules_cache)
 
-    # Collect Target Mappings
+    # Step 4: Stream Training Targets & Mine Hard Negatives
     train_target_to_s1: Dict[str, str] = {}
     for sid in train_s1_ids:
         t_list = gt_map.get(sid, [])
@@ -301,19 +342,19 @@ def train_full_universe_production_model(
             val_target_to_s1[tid] = sid
 
     all_target_ids = set(train_target_to_s1.keys()) | set(val_target_to_s1.keys())
-    logger.info(f"Total Unique Positive Targets to Stream: {len(all_target_ids):,} ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val).")
+    logger.info(f"[Step 4/5] Streaming {len(all_target_ids):,} Target Records to extract positive and hard-negative pairs...")
 
-    # Stream Training Targets & Mine Hard Negatives
-    logger.info("Streaming training targets and generating positive + hard negative pairs across all 6 channels...")
     all_train_features = []
     all_train_labels = []
     val_features = []
     val_labels = []
 
-    # Stream in chunks from train_source2 and train_source3
+    t_mine_start = time.time()
+    total_streamed_targets = 0
+
     for tsv_file in [s2_tsv, s3_tsv]:
-        logger.info(f"Streaming from {tsv_file}...")
-        batch_stream = pl.scan_csv(str(tsv_file), separator="\t", truncate_ragged_lines=True).collect_batches(chunk_size=100000)
+        logger.info(f"  Streaming training targets from {tsv_file}...")
+        batch_stream = pl.scan_csv(str(tsv_file), separator="\t", truncate_ragged_lines=True).collect_batches(chunk_size=50000)
         for batch_df in batch_stream:
             target_ids_in_batch = set(batch_df["entity_id"].to_list()) & all_target_ids
             if not target_ids_in_batch:
@@ -371,6 +412,16 @@ def train_full_universe_production_model(
                                 val_labels.append(0)
                                 negs_added += 1
 
+            total_streamed_targets += len(rows)
+            if total_streamed_targets % 50000 < len(rows):
+                elapsed = time.time() - t_mine_start
+                rate = total_streamed_targets / max(elapsed, 1e-4)
+                logger.info(
+                    f"  [Mining Progress] Extracted {total_streamed_targets:,} / {len(all_target_ids):,} targets | "
+                    f"Train pairs: {len(all_train_labels):,} | Val pairs: {len(val_labels):,} | "
+                    f"Rate: {rate:,.0f} targets/s | RAM: {get_current_rss_mb():.1f} MB"
+                )
+
     X_train = np.array(all_train_features, dtype=np.float32)
     y_train = np.array(all_train_labels, dtype=np.int32)
     X_val = np.array(val_features, dtype=np.float32)
@@ -381,23 +432,21 @@ def train_full_universe_production_model(
     logger.info(f"Full Training Feature Matrix: X shape {X_train.shape} ({int(np.sum(y_train)):,} Positives, {int(len(y_train)-np.sum(y_train)):,} Negatives).")
     logger.info(f"Validation Feature Matrix: X shape {X_val.shape} ({int(np.sum(y_val)):,} Positives, {int(len(y_val)-np.sum(y_val)):,} Negatives).")
 
-    # Train LightGBM Model with 8 vCPUs
-    logger.info("Training Production LightGBM Model on Full-Universe Feature Matrix...")
+    # Step 5: Train LightGBM Model & Fit Isotonic Calibrator
+    logger.info("[Step 5/5] Training Production LightGBM GBDT Model with 4 CPU threads...")
+    config.lgb_params["n_jobs"] = num_workers
     trainer = ERXModelTrainer(config)
     trainer.train(X_train, y_train, X_val, y_val)
     trainer.save(model_cache)
 
-    # Fit Isotonic Calibrator strictly on held-out validation predictions
     logger.info("Fitting Isotonic Calibrator strictly on held-out validation predictions (Zero Leakage)...")
     cal_iso = ERXCalibrator(method="isotonic")
     raw_val_probs = trainer.model.predict(X_val)
     cal_iso.fit(raw_val_probs, y_val)
 
-    # Save fitted calibrator
     with open(calibrator_cache, "wb") as f:
         pickle.dump(cal_iso, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # Compute validation metrics
     val_preds = (cal_iso.predict(raw_val_probs) >= 0.50).astype(int)
     val_tp = int(np.sum((val_preds == 1) & (y_val == 1)))
     val_fp = int(np.sum((val_preds == 1) & (y_val == 0)))
@@ -426,37 +475,37 @@ def train_full_universe_production_model(
 
 def run_full_production():
     """
-    Main Production Runner: Executes Full 2.2M Training + Full 1.73M Test Inference.
+    Main Production Runner: Executes Full 2.2M Training + Full 1.73M Test Inference with Live Monitoring.
     """
     print("===================================================================")
     print("        ER-X ULTRA-FAST FULL-DATA PRODUCTION PIPELINE              ")
-    print("   Hardware: 8 vCPU | 32 GB RAM | CPU-Optimized Vectorized Engine  ")
+    print("   Hardware Profile: 4 vCPU | 16 GB RAM | Live System Monitoring   ")
     print("===================================================================")
 
     start_total_time = time.time()
     config = ERXConfig()
     config.ensure_directories()
+    num_workers = min(4, os.cpu_count() or 4)
 
     # ------------------------------------------------------------------
     # 1. Phase A-D: Full-Universe Model Training & Isotonic Calibration
     # ------------------------------------------------------------------
-    trainer, calibrator, rule_engine, feat_extractor, val_stats = train_full_universe_production_model(config)
+    trainer, calibrator, rule_engine, feat_extractor, val_stats = train_full_universe_production_model(config, num_workers=num_workers)
 
     # ------------------------------------------------------------------
     # 2. Phase E: Ingest and Index Full 1,732,544 Test S1 Entities (Country-Partitioned)
     # ------------------------------------------------------------------
-    print("\n[Phase E: Stage 1/2] Indexing 1,732,544 Full Test S1 Entities (Country-Partitioned)...")
+    print("\n[Phase E: Stage 1/2] Ingesting & Indexing 1,732,544 Full Test S1 Entities...")
     t0_s1 = time.time()
     normalizer = ERXNormalizer(learned_aliases=rule_engine.token_aliases)
     id_mapper = InternalIDMapper()
 
     test_s1_tsv = config.data_dir / "test" / "test_source1.tsv"
     test_s1_cache = config.cache_dir / "test_s1_mvs.pkl"
-    test_s1_mvs = get_cached_normalized_records(test_s1_cache, test_s1_tsv, normalizer, id_mapper, num_workers=config.rapidfuzz_workers)
+    test_s1_mvs = get_cached_normalized_records(test_s1_cache, test_s1_tsv, normalizer, id_mapper, num_workers=num_workers)
     num_test_s1 = len(test_s1_mvs)
     test_s1_ordered_ids = [m.entity_id for m in test_s1_mvs]
 
-    # Country-partitioned indexes for instant lookup
     country_indexes: Dict[str, ERXRetrievalEngine] = {
         "US": ERXRetrievalEngine(config),
         "India": ERXRetrievalEngine(config),
@@ -471,11 +520,11 @@ def run_full_production():
 
     s1_dict = {m.internal_id: m for m in test_s1_mvs}
 
-    logger.info(f"Building Country-Partitioned Multi-Channel Indexes over {num_test_s1:,} S1 entities...")
+    logger.info(f"Building Country-Partitioned Multi-Channel Indexes over {num_test_s1:,} Test S1 entities...")
     for c_key, mvs in s1_by_country.items():
         if mvs:
             country_indexes[c_key].index_s1(mvs)
-            logger.info(f"  Country '{c_key}': {len(mvs):,} S1 entities indexed.")
+            logger.info(f"  -> Country '{c_key}': {len(mvs):,} S1 entities indexed across all channels.")
 
     feat_extractor.token_idf = country_indexes["US"].token_idf
     s1_index_time = time.time() - t0_s1
@@ -484,7 +533,7 @@ def run_full_production():
     # ------------------------------------------------------------------
     # 3. Phase E: Stream Test S2 & S3 with Multiprocessing + Vectorized Batch Scoring
     # ------------------------------------------------------------------
-    print("\n[Phase E: Stage 2/2] Streaming 9,969,589 Test Targets with Multi-Worker Parallel Retrieval...")
+    print("\n[Phase E: Stage 2/2] Streaming 9,969,589 Test Targets with Multi-Worker Parallel Scoring...")
     t0_targets = time.time()
     test_s2_tsv = config.data_dir / "test" / "test_source2.tsv"
     test_s3_tsv = config.data_dir / "test" / "test_source3.tsv"
@@ -498,8 +547,8 @@ def run_full_production():
     tier1_exact_matches = 0
     tier2_fuzzy_matches = 0
 
-    chunk_size = config.target_chunk_size  # 50,000 targets per chunk
-    num_workers = min(8, os.cpu_count() or 8)
+    chunk_size = 50000  # Optimal for 16 GB RAM
+    total_target_count = 9_969_589
 
     for src_name, tsv_file in [("Source 2", test_s2_tsv), ("Source 3", test_s3_tsv)]:
         logger.info(f"Streaming and evaluating {src_name} ({tsv_file})...")
@@ -517,7 +566,7 @@ def run_full_production():
                 for r in batch_rows
             ]
 
-            # Divide chunk into sub-batches for multi-process worker pool
+            # Divide chunk into sub-batches for 4 CPU worker processes
             sub_batch_size = max(1, math.ceil(len(target_mvs) / num_workers))
             sub_batches = [target_mvs[i : i + sub_batch_size] for i in range(0, len(target_mvs), sub_batch_size)]
 
@@ -527,7 +576,6 @@ def run_full_production():
             all_tier2_cand_lists = []
             all_tier2_features = []
 
-            # Execute parallel retrieval & feature extraction across all 8 CPU cores
             with ProcessPoolExecutor(
                 max_workers=num_workers,
                 initializer=_init_retrieval_worker,
@@ -558,9 +606,7 @@ def run_full_production():
             # 2. Process Tier 2 Fuzzy GBDT Candidates with Vectorized C++ Batch Scoring
             if all_tier2_features:
                 X_batch = np.vstack(all_tier2_features)
-                # Single C++ batch evaluation call to LightGBM Booster
                 raw_probs = trainer.model.predict(X_batch)
-                # Single vectorized call to Isotonic Calibrator
                 cal_probs = calibrator.predict(raw_probs)
 
                 feat_offset = 0
@@ -583,7 +629,6 @@ def run_full_production():
                         target_probs_sorted = np.sort(target_probs)
                         second_best_prob = float(target_probs_sorted[-2])
 
-                    # Compound agreement check
                     s1_cand_rec = s1_dict[best_cand.s1_internal_id]
                     name_sim = fuzz.token_set_ratio(target.norm_name, s1_cand_rec.norm_name) / 100.0 if (target.norm_name and s1_cand_rec.norm_name) else 0.0
                     addr_sim = fuzz.token_set_ratio(target.norm_addr, s1_cand_rec.norm_addr) / 100.0 if (target.norm_addr and s1_cand_rec.norm_addr) else 0.0
@@ -603,20 +648,24 @@ def run_full_production():
             total_targets_processed += len(batch_rows)
             chunk_time = time.time() - chunk_t0
             rate = len(batch_rows) / max(chunk_time, 1e-4)
+            overall_elapsed = time.time() - t0_targets
+            overall_rate = total_targets_processed / max(overall_elapsed, 1e-4)
+            remaining_targets = total_target_count - total_targets_processed
+            eta_mins = (remaining_targets / max(overall_rate, 1e-4)) / 60.0
+            pct_done = (total_targets_processed / total_target_count) * 100.0
 
-            if chunk_idx % 10 == 0 or total_targets_processed >= 9_900_000:
-                logger.info(
-                    f"[{src_name}] Chunk {chunk_idx:3d} | Processed: {total_targets_processed:,} / 9,969,589 "
-                    f"({total_targets_processed / 99695.89:.1f}%) | Throughput: {rate:,.0f} targets/s | "
-                    f"Matches: {total_matches_selected:,} (Tier 1: {tier1_exact_matches:,}, Tier 2: {tier2_fuzzy_matches:,}) | "
-                    f"RAM: {get_current_rss_mb():.1f} MB"
-                )
+            logger.info(
+                f"[{src_name}] Chunk {chunk_idx:3d} | Evaluated: {total_targets_processed:,} / {total_target_count:,} "
+                f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
+                f"Matches: {total_matches_selected:,} (T1: {tier1_exact_matches:,}, T2: {tier2_fuzzy_matches:,}) | "
+                f"RAM: {get_current_rss_mb():.1f} MB"
+            )
 
     target_stream_time = time.time() - t0_targets
     logger.info(f"Target streaming complete in {target_stream_time:.2f}s.")
 
     # ------------------------------------------------------------------
-    # 4. Phase F: Write Output Deliverables & Competition Formats
+    # 4. Phase F: Write Output Deliverables
     # ------------------------------------------------------------------
     print("\n[Phase F: Stage 1/2] Writing Official Output Files...")
     t0_write = time.time()
@@ -678,7 +727,7 @@ def run_full_production():
         f"* **Stage 2 (Test S1 Multi-Channel Indexing)**: {s1_index_time:.2f}s",
         f"* **Stage 3 (Streaming 10M Targets + Multi-Process Scoring)**: {target_stream_time:.2f}s",
         f"* **Target Evaluation Throughput**: {total_targets_processed / max(target_stream_time, 1):,.0f} targets/second",
-        f"* **Peak RAM Footprint**: {get_current_rss_mb():.1f} MB (Budget: 32 GB)\n",
+        f"* **Peak RAM Footprint**: {get_current_rss_mb():.1f} MB (Budget: 16 GB)\n",
     ]
 
     with open(report_path, "w", encoding="utf-8") as f:
