@@ -194,7 +194,9 @@ class ERXNormalizer:
         entity_id: str,
         name: Optional[str],
         addr: Optional[str],
-        country: Optional[str]
+        country: Optional[str],
+        is_s2: Optional[bool] = None,
+        is_s3: Optional[bool] = None,
     ) -> MultiViewRecord:
         raw_n = str(name or "").strip()
         raw_a = str(addr or "").strip()
@@ -235,8 +237,8 @@ class ERXNormalizer:
         num_toks = [w for w in norm_a.split() if w.isdigit()]
         numeric_sig = "-".join(sorted(num_toks)) if num_toks else ""
 
-        is_s2 = entity_id.startswith("S2-")
-        is_s3 = entity_id.startswith("S3-")
+        resolved_is_s2 = entity_id.startswith("S2-") if is_s2 is None else is_s2
+        resolved_is_s3 = entity_id.startswith("S3-") if is_s3 is None else is_s3
 
         return MultiViewRecord(
             internal_id=internal_id,
@@ -254,8 +256,8 @@ class ERXNormalizer:
             norm_addr=norm_a,
             translit_addr=translit_a,
             numeric_signature=numeric_sig,
-            is_s2=is_s2,
-            is_s3=is_s3,
+            is_s2=resolved_is_s2,
+            is_s3=resolved_is_s3,
             is_name_missing=is_name_missing,
             is_addr_missing=is_addr_missing,
             is_country_missing=is_country_missing,
