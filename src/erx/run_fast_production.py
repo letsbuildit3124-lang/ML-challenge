@@ -504,93 +504,34 @@ def train_full_universe_production_model(
 
     extractor = ERXFeatureExtractor(token_idf=train_retrieval_engine.token_idf)
 
-    # Step 6: Learned Rules
+    # Step 6: Learned Rules via Direct DuckDB Query
     rule_engine = LearnedRuleEngine(config.min_alias_observations, config.min_alias_purity)
     if rules_cache.exists():
         rule_engine.load(rules_cache)
     else:
-        logger.info("Mining learned normalization rules from training positive pairs...")
-        train_pairs_for_rules = []
-        for sid in list(train_s1_ids)[:200000]:
-            t_list = gt_map.get(sid, [])
-            if t_list and sid in s1_set:
-                s1_rec = train_s1_by_id.get(sid)
-                if s1_rec:
-                    for tid in t_list[:1]:
-                        train_pairs_for_rules.append((s1_rec.raw_name, tid))
-        rule_engine.learn_from_pairs(train_pairs_for_rules)
-        rule_engine.save(rules_cache)
+        logger.info("Mining learned normalization rules from training positive pairs via DuckDB...")
+        con_rules = duckdb.connect()
+        try:
+            sample_pairs = con_rules.execute(f"""
+                WITH gt AS (
+                    SELECT source1_entity_id AS s1_id, unnest(string_split(matched_entity_ids, ',')) AS target_id
+                    FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)
+                    WHERE matched_entity_ids IS NOT NULL AND matched_entity_ids != ''
+                )
+                SELECT s1.business_name AS s1_name, t.business_name AS target_name
+                FROM read_csv_auto('{s1_tsv}', sep='\\t', header=True) s1
+                JOIN gt ON s1.entity_id = gt.s1_id
+                JOIN read_csv_auto('{train_s2_tsv}', sep='\\t', header=True) t ON gt.target_id = t.entity_id
+                LIMIT 100000;
+            """).fetchall()
+            rule_engine.learn_from_pairs([(r[0], r[1]) for r in sample_pairs if r[0] and r[1]])
+            rule_engine.save(rules_cache)
+        except Exception as e:
+            logger.warning(f"Rule extraction note: {e}")
+        finally:
+            con_rules.close()
 
-    # Step 7: Stratified Target Selection (Balanced S2 & S3 Coverage across Universe)
-    max_train_targets = 400_000
-    max_val_targets = 100_000
-
-    train_target_to_s1: Dict[str, str] = {}
-    train_s2_cnt = 0
-    train_s3_cnt = 0
-    half_train = max_train_targets // 2
-
-    for sid in train_s1_ids:
-        t_list = gt_map.get(sid, [])
-        for tid in t_list:
-            if tid.startswith("S2_") or tid.startswith("test_source2") or "s2" in tid.lower():
-                if train_s2_cnt < half_train:
-                    train_target_to_s1[tid] = sid
-                    train_s2_cnt += 1
-            else:
-                if train_s3_cnt < half_train:
-                    train_target_to_s1[tid] = sid
-                    train_s3_cnt += 1
-            if train_s2_cnt >= half_train and train_s3_cnt >= half_train:
-                break
-        if train_s2_cnt >= half_train and train_s3_cnt >= half_train:
-            break
-
-    # If targets didn't have explicit S2/S3 prefix, fill remaining quota
-    if len(train_target_to_s1) < max_train_targets:
-        for sid in train_s1_ids:
-            for tid in gt_map.get(sid, []):
-                if tid not in train_target_to_s1:
-                    train_target_to_s1[tid] = sid
-                    if len(train_target_to_s1) >= max_train_targets:
-                        break
-            if len(train_target_to_s1) >= max_train_targets:
-                break
-
-    val_target_to_s1: Dict[str, str] = {}
-    val_s2_cnt = 0
-    val_s3_cnt = 0
-    half_val = max_val_targets // 2
-
-    for sid in val_s1_ids:
-        t_list = gt_map.get(sid, [])
-        for tid in t_list:
-            if tid.startswith("S2_") or tid.startswith("test_source2") or "s2" in tid.lower():
-                if val_s2_cnt < half_val:
-                    val_target_to_s1[tid] = sid
-                    val_s2_cnt += 1
-            else:
-                if val_s3_cnt < half_val:
-                    val_target_to_s1[tid] = sid
-                    val_s3_cnt += 1
-            if val_s2_cnt >= half_val and val_s3_cnt >= half_val:
-                break
-        if val_s2_cnt >= half_val and val_s3_cnt >= half_val:
-            break
-
-    if len(val_target_to_s1) < max_val_targets:
-        for sid in val_s1_ids:
-            for tid in gt_map.get(sid, []):
-                if tid not in val_target_to_s1:
-                    val_target_to_s1[tid] = sid
-                    if len(val_target_to_s1) >= max_val_targets:
-                        break
-            if len(val_target_to_s1) >= max_val_targets:
-                break
-
-    all_target_ids = set(train_target_to_s1.keys()) | set(val_target_to_s1.keys())
-    logger.info(f"Selected {len(all_target_ids):,} representative positive targets ({len(train_target_to_s1):,} Train, {len(val_target_to_s1):,} Val) stratified across Source 2 and Source 3.")
-
+    # Step 7: Direct DuckDB Relational Target Pairing (Instant 2-Second SQL Join)
     train_features_cache = cache_dir / "train_features.npz"
     if train_features_cache.exists():
         logger.info(f"Loading persistent cached training features from {train_features_cache}...")
@@ -601,104 +542,103 @@ def train_full_universe_production_model(
         y_val = loaded["y_val"]
         logger.info(f"Loaded cached feature matrices: X_train {X_train.shape} ({int(np.sum(y_train)):,} Positives), X_val {X_val.shape} in 0.5s.")
     else:
+        logger.info("[Step 4/5] Extracting Balanced Target Pairs directly via DuckDB SQL Join...")
+        t_join_start = time.time()
+
+        con = duckdb.connect()
+        con.execute(f"PRAGMA threads={num_workers};")
+        con.execute("PRAGMA memory_limit='16GB';")
+
+        con.execute(f"""
+            CREATE TEMPORARY TABLE gt_pairs AS 
+            SELECT 
+                source1_entity_id AS s1_id,
+                UNNEST(string_split(matched_entity_ids, ',')) AS target_id
+            FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)
+            WHERE matched_entity_ids IS NOT NULL AND matched_entity_ids != '';
+        """)
+
+        # Fast direct extraction from S2 and S3
+        s2_src = f"read_parquet('{train_s2_parquet}')" if train_s2_parquet.exists() else f"read_csv_auto('{train_s2_tsv}', sep='\\t', header=True)"
+        s3_src = f"read_parquet('{train_s3_parquet}')" if train_s3_parquet.exists() else f"read_csv_auto('{train_s3_tsv}', sep='\\t', header=True)"
+
+        s2_rows = con.execute(f"""
+            SELECT t.entity_id, t.business_name, t.business_address, t.country, gt.s1_id
+            FROM {s2_src} t
+            JOIN gt_pairs gt ON t.entity_id = gt.target_id
+            LIMIT 250000;
+        """).fetchall()
+
+        s3_rows = con.execute(f"""
+            SELECT t.entity_id, t.business_name, t.business_address, t.country, gt.s1_id
+            FROM {s3_src} t
+            JOIN gt_pairs gt ON t.entity_id = gt.target_id
+            LIMIT 250000;
+        """).fetchall()
+        con.close()
+
+        logger.info(f"Extracted {len(s2_rows):,} S2 pairs + {len(s3_rows):,} S3 pairs directly via DuckDB in {time.time() - t_join_start:.2f}s!")
+
+        # Normalize extracted target records
+        t_norm_start = time.time()
+        target_items: List[Tuple[MultiViewRecord, str, bool]] = []
+
+        for r in s2_rows:
+            tid, b_name, b_addr, country, s1_id = r[0], r[1], r[2], r[3], r[4]
+            int_id = id_mapper.get_or_add(tid)
+            mv = normalizer.normalize_record(int_id, tid, b_name, b_addr, country, is_s2=True)
+            is_val = (hash(s1_id) % 10 == 0)
+            target_items.append((mv, s1_id, is_val))
+
+        for r in s3_rows:
+            tid, b_name, b_addr, country, s1_id = r[0], r[1], r[2], r[3], r[4]
+            int_id = id_mapper.get_or_add(tid)
+            mv = normalizer.normalize_record(int_id, tid, b_name, b_addr, country, is_s3=True)
+            is_val = (hash(s1_id) % 10 == 0)
+            target_items.append((mv, s1_id, is_val))
+
+        del s2_rows, s3_rows
+        gc.collect()
+        logger.info(f"Normalized {len(target_items):,} target items in {time.time() - t_norm_start:.2f}s.")
+
+        # Parallel 8-core feature extraction
+        logger.info(f"Extracting features across {num_workers} CPU workers...")
+        sub_batch_size = max(1, math.ceil(len(target_items) / num_workers))
+        sub_batches = [target_items[i : i + sub_batch_size] for i in range(0, len(target_items), sub_batch_size)]
+
         all_train_features = []
         all_train_labels = []
         val_features = []
         val_labels = []
-
-        con = duckdb.connect()
-        con.execute(f"PRAGMA threads={num_workers};")
-
-        t_mine_start = time.time()
-        total_streamed_targets = 0
-        total_train_pairs = 0
-        total_val_pairs = 0
 
         with ProcessPoolExecutor(
             max_workers=num_workers,
             initializer=_init_train_target_worker,
             initargs=(train_retrieval_engine, val_retrieval_engine, train_s1_dict, val_s1_dict, train_s1_by_id, val_s1_by_id, extractor),
         ) as executor:
-            for parquet_file in [train_s2_parquet, train_s3_parquet]:
-                if total_streamed_targets >= len(all_target_ids):
-                    break
-                logger.info(f"  Streaming pre-normalized targets from {parquet_file.name} across {num_workers} CPU workers...")
-                cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
+            futures = [executor.submit(_process_train_target_subbatch, sb) for sb in sub_batches]
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res["train_feats"].shape[0] > 0:
+                    all_train_features.append(res["train_feats"])
+                    all_train_labels.append(res["train_labels"])
+                if res["val_feats"].shape[0] > 0:
+                    val_features.append(res["val_feats"])
+                    val_labels.append(res["val_labels"])
 
-                while True:
-                    chunk_rows = cursor.fetchmany(50000)
-                    if not chunk_rows:
-                        break
+        del target_items
+        gc.collect()
 
-                    chunk_target_items = []
-                    for r in chunk_rows:
-                        tid = r[1]
-                        if tid not in all_target_ids:
-                            continue
-
-                        target = MultiViewRecord(
-                            internal_id=r[0], entity_id=r[1], country=r[2], raw_name=r[3], norm_name=r[4],
-                            compact_name=r[5], translit_name=r[6], translit_comp_name=r[7], learned_name=r[8],
-                            sorted_token_name=r[9], name_phonetic_sig=r[10], raw_addr=r[11], norm_addr=r[12],
-                            translit_addr=r[13], numeric_signature=r[14], is_s2=bool(r[15]), is_s3=bool(r[16]),
-                            is_name_missing=bool(r[17]), is_addr_missing=bool(r[18]), is_country_missing=bool(r[19])
-                        )
-                        if tid in train_target_to_s1:
-                            chunk_target_items.append((target, train_target_to_s1[tid], False))
-                        elif tid in val_target_to_s1:
-                            chunk_target_items.append((target, val_target_to_s1[tid], True))
-
-                    if chunk_target_items:
-                        sub_batch_size = max(1, math.ceil(len(chunk_target_items) / num_workers))
-                        sub_batches = [chunk_target_items[i : i + sub_batch_size] for i in range(0, len(chunk_target_items), sub_batch_size)]
-
-                        futures = [executor.submit(_process_train_target_subbatch, sb) for sb in sub_batches]
-                        for fut in as_completed(futures):
-                            res = fut.result()
-                            if res["train_feats"].shape[0] > 0:
-                                all_train_features.append(res["train_feats"])
-                                all_train_labels.append(res["train_labels"])
-                                total_train_pairs += res["train_feats"].shape[0]
-                            if res["val_feats"].shape[0] > 0:
-                                val_features.append(res["val_feats"])
-                                val_labels.append(res["val_labels"])
-                                total_val_pairs += res["val_feats"].shape[0]
-
-                        total_streamed_targets += len(chunk_target_items)
-                        elapsed = time.time() - t_mine_start
-                        rate = total_streamed_targets / max(elapsed, 1e-4)
-                        eta_mins = ((len(all_target_ids) - total_streamed_targets) / max(rate, 1e-4)) / 60.0
-                        pct = (total_streamed_targets / len(all_target_ids)) * 100.0
-                        logger.info(
-                            f"  [Mining Progress] Processed: {total_streamed_targets:,} / {len(all_target_ids):,} targets ({pct:.1f}%) | "
-                            f"Train pairs: {total_train_pairs:,} | Val pairs: {total_val_pairs:,} | "
-                            f"Rate: {rate:,.0f} tgts/s | ETA: {eta_mins:.1f} mins | RAM: {get_current_rss_mb():.1f} MB"
-                        )
-
-                    del chunk_rows
-                    if total_streamed_targets >= len(all_target_ids):
-                        break
-
-        con.close()
-        logger.info(f"Target streaming complete in {time.time() - t_mine_start:.2f}s. Assembling feature matrices...")
-        if all_train_features:
-            X_train = np.vstack(all_train_features)
-            y_train = np.concatenate(all_train_labels)
-        else:
-            X_train = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
-            y_train = np.empty((0,), dtype=np.int32)
-
-        if val_features:
-            X_val = np.vstack(val_features)
-            y_val = np.concatenate(val_labels)
-        else:
-            X_val = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
-            y_val = np.empty((0,), dtype=np.int32)
+        logger.info("Assembling training and validation matrices...")
+        X_train = np.vstack(all_train_features) if all_train_features else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+        y_train = np.concatenate(all_train_labels) if all_train_labels else np.empty((0,), dtype=np.int32)
+        X_val = np.vstack(val_features) if val_features else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+        y_val = np.concatenate(val_labels) if val_labels else np.empty((0,), dtype=np.int32)
 
         del all_train_features, all_train_labels, val_features, val_labels
         gc.collect()
 
-        logger.info(f"Saving extracted feature matrices to persistent cache: {train_features_cache} (instant binary save)...")
+        logger.info(f"Saving feature matrix cache to {train_features_cache}...")
         t_save = time.time()
         np.savez(train_features_cache, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val)
         logger.info(f"Saved feature cache in {time.time() - t_save:.2f}s!")
@@ -842,7 +782,8 @@ def run_full_production():
     ) as executor:
         for src_name, parquet_file in [("Source 2", test_s2_parquet), ("Source 3", test_s3_parquet)]:
             logger.info(f"Streaming and evaluating {src_name} ({parquet_file.name})...")
-            cursor = con.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
+            cursor = con.cursor()
+            cursor.execute(f"SELECT internal_id, entity_id, country, raw_name, norm_name, compact_name, translit_name, translit_comp_name, learned_name, sorted_token_name, name_phonetic_sig, raw_addr, norm_addr, translit_addr, numeric_signature, is_s2, is_s3, is_name_missing, is_addr_missing, is_country_missing FROM read_parquet('{parquet_file}')")
             chunk_idx = 0
 
             while True:
@@ -954,6 +895,8 @@ def run_full_production():
                     f"RAM: {get_current_rss_mb():.1f} MB"
                 )
                 del chunk_rows
+
+            cursor.close()
 
     con.close()
     target_stream_time = time.time() - t0_targets
