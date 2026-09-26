@@ -335,6 +335,8 @@ def train_full_universe_production_model(
 
     train_s1_dict = {m.internal_id: m for m in train_s1_mvs}
     val_s1_dict = {m.internal_id: m for m in val_s1_mvs}
+    train_s1_by_id = {m.entity_id: m for m in train_s1_mvs}
+    val_s1_by_id = {m.entity_id: m for m in val_s1_mvs}
 
     # Step 5: Multi-Channel Indexing ONCE across all channels
     logger.info(f"[Step 3/5] Indexing {len(train_s1_mvs):,} Train S1 entities across 6 channels...")
@@ -357,7 +359,7 @@ def train_full_universe_production_model(
         for sid in list(train_s1_ids)[:200000]:
             t_list = gt_map.get(sid, [])
             if t_list and sid in s1_set:
-                s1_rec = train_s1_dict.get(id_mapper.get_int(sid))
+                s1_rec = train_s1_by_id.get(sid)
                 if s1_rec:
                     for tid in t_list[:1]:
                         train_pairs_for_rules.append((s1_rec.raw_name, tid))
@@ -418,8 +420,9 @@ def train_full_universe_production_model(
                 # Train Split Target
                 if tid in train_target_to_s1:
                     true_s1_str = train_target_to_s1[tid]
-                    true_s1_int = id_mapper.get_int(true_s1_str)
-                    if true_s1_int is not None and true_s1_int in train_s1_dict:
+                    s1_rec = train_s1_by_id.get(true_s1_str)
+                    if s1_rec is not None:
+                        true_s1_int = s1_rec.internal_id
                         cands = train_retrieval_engine.retrieve_for_target(target, top_k=15)
                         scored_cands = list(cands)
                         ret_s1_ints = {c.s1_internal_id for c in scored_cands}
@@ -440,8 +443,9 @@ def train_full_universe_production_model(
                 # Validation Split Target (Held-Out)
                 elif tid in val_target_to_s1:
                     true_s1_str = val_target_to_s1[tid]
-                    true_s1_int = id_mapper.get_int(true_s1_str)
-                    if true_s1_int is not None and true_s1_int in val_s1_dict:
+                    s1_rec = val_s1_by_id.get(true_s1_str)
+                    if s1_rec is not None:
+                        true_s1_int = s1_rec.internal_id
                         cands = val_retrieval_engine.retrieve_for_target(target, top_k=15)
                         scored_cands = list(cands)
                         ret_s1_ints = {c.s1_internal_id for c in scored_cands}
@@ -472,10 +476,20 @@ def train_full_universe_production_model(
             del chunk_rows
 
     con.close()
-    X_train = np.array(all_train_features, dtype=np.float32)
-    y_train = np.array(all_train_labels, dtype=np.int32)
-    X_val = np.array(val_features, dtype=np.float32)
-    y_val = np.array(val_labels, dtype=np.int32)
+    if all_train_features:
+        X_train = np.array(all_train_features, dtype=np.float32)
+        y_train = np.array(all_train_labels, dtype=np.int32)
+    else:
+        X_train = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+        y_train = np.empty((0,), dtype=np.int32)
+
+    if val_features:
+        X_val = np.array(val_features, dtype=np.float32)
+        y_val = np.array(val_labels, dtype=np.int32)
+    else:
+        X_val = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+        y_val = np.empty((0,), dtype=np.int32)
+
     del all_train_features, all_train_labels, val_features, val_labels
     gc.collect()
 
