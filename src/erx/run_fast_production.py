@@ -171,46 +171,37 @@ def get_cached_normalized_records(
     t0 = time.time()
     con = duckdb.connect()
     con.execute("PRAGMA threads=4;")
-    rows = con.execute(
+    cursor = con.execute(
         f"SELECT entity_id, business_name, business_address, country FROM read_csv_auto('{source_tsv}', sep='\\t', header=True)"
-    ).fetchall()
-    total = len(rows)
-    logger.info(f"Loaded {total:,} raw records from disk in {time.time() - t0:.2f}s. Normalizing across {num_workers} CPU workers...")
-
-    # Populate id_mapper upfront
-    for r in rows:
-        id_mapper.get_or_add(r[0])
-
-    # Parallel chunked normalization with live progress
-    chunk_size = 25000
-    chunk_tasks = []
-    for i in range(0, total, chunk_size):
-        chunk_rows = rows[i : i + chunk_size]
-        chunk_tasks.append((chunk_rows, i, normalizer.learned_aliases))
+    )
 
     records: List[MultiViewRecord] = []
     done_records = 0
     t_norm_start = time.time()
+    batch_size = 50000
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(_normalize_raw_subchunk, task): len(task[0]) for task in chunk_tasks}
-        for fut in as_completed(futures):
-            chunk_recs = fut.result()
-            records.extend(chunk_recs)
-            done_records += len(chunk_recs)
-            if done_records % 100000 < chunk_size or done_records == total:
-                elapsed = time.time() - t_norm_start
-                rate = done_records / max(elapsed, 1e-4)
-                pct = (done_records / total) * 100.0
-                eta_s = (total - done_records) / max(rate, 1e-4)
-                logger.info(
-                    f"  [Progress] Normalized: {done_records:,} / {total:,} ({pct:.1f}%) | "
-                    f"Rate: {rate:,.0f} recs/s | ETA: {eta_s:.1f}s | RAM: {get_current_rss_mb():.1f} MB"
-                )
+    while True:
+        chunk_rows = cursor.fetchmany(batch_size)
+        if not chunk_rows:
+            break
 
-    # Sort records by internal_id to guarantee deterministic order
-    records.sort(key=lambda r: r.internal_id)
-    del rows, chunk_tasks
+        start_id = len(records)
+        for offset, r in enumerate(chunk_rows):
+            sid = r[0]
+            int_id = id_mapper.get_or_add(sid)
+            records.append(normalizer.normalize_record(int_id, sid, r[1], r[2], r[3]))
+
+        done_records += len(chunk_rows)
+        elapsed = time.time() - t_norm_start
+        rate = done_records / max(elapsed, 1e-4)
+        if done_records % 200000 < batch_size or done_records >= 2200000:
+            logger.info(
+                f"  [Normalization Progress] Normalized: {done_records:,} records | "
+                f"Throughput: {rate:,.0f} recs/s | RAM: {get_current_rss_mb():.1f} MB"
+            )
+        del chunk_rows
+
+    del cursor, con
     gc.collect()
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)

@@ -231,10 +231,8 @@ class ERXNormalizer:
         addr_toks = norm_a.split() if norm_a else []
         addr_tok_set = set(addr_toks)
 
-        # Numeric components and house numbers
-        num_toks = [w for w in addr_toks if w.isdigit()]
-        house_numbers = set(num_toks[:2]) if num_toks else set()
-        postal_codes = {w for w in num_toks if len(w) in (5, 6)}
+        # Numeric signature
+        num_toks = [w for w in norm_a.split() if w.isdigit()]
         numeric_sig = "-".join(sorted(num_toks)) if num_toks else ""
 
         is_s2 = entity_id.startswith("S2-")
@@ -251,22 +249,10 @@ class ERXNormalizer:
             translit_comp_name=translit_comp_n,
             learned_name=learned_n,
             sorted_token_name=sorted_token_name,
-            name_tokens=name_toks,
-            name_tok_set=name_tok_set,
-            translit_tokens=translit_toks,
-            translit_tok_set=translit_tok_set,
-            name_char3_set=c3_set,
-            name_char4_set=c4_set,
-            name_char5_set=c5_set,
             name_phonetic_sig=phonetic_sig,
             raw_addr=raw_a,
             norm_addr=norm_a,
             translit_addr=translit_a,
-            addr_tokens=addr_toks,
-            addr_tok_set=addr_tok_set,
-            house_numbers=house_numbers,
-            postal_codes=postal_codes,
-            city_tokens=set(),
             numeric_signature=numeric_sig,
             is_s2=is_s2,
             is_s3=is_s3,
