@@ -27,6 +27,26 @@ from src.dense.text_builder import (
 from src.verify_e5_embeddings import verify_e5_output
 from src.assemble_e5_memmap import assemble_e5_memmap
 from src.v5_e5_hybrid_pipeline import get_provenance_label, PROV_DET, PROV_SPARSE_NAME, PROV_E5_DENSE
+from src.export_e5_input import build_export_sql
+
+
+def test_build_export_sql():
+    # 1. Full universe query
+    sql_full = build_export_sql(limit_rows=None)
+    assert not sql_full.rstrip().endswith(";")
+    assert "ORDER BY target_row_id ASC" in sql_full
+    assert "LIMIT" not in sql_full
+
+    # 2. Smoke query with limit
+    sql_smoke = build_export_sql(limit_rows=10000)
+    assert not sql_smoke.rstrip().endswith(";")
+    assert "LIMIT 10000" in sql_smoke
+    assert "ORDER BY target_row_id ASC" in sql_smoke
+
+    # 3. Verify valid nesting inside COPY (...) expression
+    copy_sql = f"COPY ({sql_smoke}) TO 'test.parquet' (FORMAT PARQUET);"
+    assert ";" not in sql_smoke
+    assert "LIMIT 10000;" not in copy_sql
 
 
 def test_e5_text_builder_prefixes():

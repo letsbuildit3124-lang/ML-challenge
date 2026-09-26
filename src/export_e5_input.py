@@ -44,6 +44,24 @@ def compute_file_sha256(file_path: str) -> str:
     return hasher.hexdigest()
 
 
+def build_export_sql(limit_rows: Optional[int] = None) -> str:
+    """
+    Constructs deterministic SELECT query for DuckDB export without trailing semicolons.
+    Ensures safe nesting inside COPY (...) expressions.
+    """
+    limit_clause = f"\n        LIMIT {limit_rows}" if limit_rows else ""
+    return f"""
+        SELECT 
+            eid AS target_id,
+            norm_name AS business_name,
+            norm_addr AS business_address,
+            country,
+            CASE WHEN eid LIKE 's2_%' THEN 'S2' ELSE 'S3' END AS source
+        FROM targets
+        ORDER BY target_row_id ASC{limit_clause}
+    """.strip()
+
+
 def export_e5_targets(
     db_path: Optional[str] = None,
     output_path: str = "cache/e5_gpu/input/targets.parquet",
@@ -80,33 +98,14 @@ def export_e5_targets(
     print("-" * 80)
 
     t0 = time.time()
-    s2_count = 0
-    s3_count = 0
-    null_name_count = 0
-    null_addr_count = 0
-    null_ctry_count = 0
 
     # Temporary staging file
     temp_parquet = f"{out_file}.tmp"
     if os.path.exists(temp_parquet):
         os.remove(temp_parquet)
 
-    # Use DuckDB native copy or chunked streaming for bounded memory
-    # We execute streaming export with PyArrow / Polars to keep RAM < 150MB
-    limit_clause = f"LIMIT {total_to_export}" if total_to_export < total_in_db else ""
-
-    # Stream query
-    query = f"""
-        SELECT 
-            eid AS target_id,
-            norm_name AS business_name,
-            norm_addr AS business_address,
-            country,
-            CASE WHEN eid LIKE 's2_%' THEN 'S2' ELSE 'S3' END AS source
-        FROM targets
-        ORDER BY target_row_id ASC
-        {limit_clause};
-    """
+    # Build clean SELECT subquery without trailing semicolon
+    query = build_export_sql(limit_rows=total_to_export if total_to_export < total_in_db else None)
 
     print("[Exporter] Streaming target records from DuckDB to Parquet...")
     with MemoryTracker(f"DuckDB Target Export ({total_to_export:,} rows)"):
