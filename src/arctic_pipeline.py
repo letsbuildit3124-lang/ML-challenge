@@ -276,6 +276,53 @@ class ArcticGPUOrchestrator:
         print(f"[Assembly Stage] Assembly completed successfully ({total_rows:,} rows).")
         return self.merged_emb_path, self.merged_ids_path
 
+    def validate_preflight(self, skip_kaggle: bool = False):
+        """
+        Executes strict pre-flight validation checks before altering any files or creating remote jobs.
+        """
+        print("\n" + "=" * 80)
+        print("[PRE-FLIGHT VALIDATION] Verifying Environment, Disk Space, Configuration & API Access...")
+        print("=" * 80)
+
+        # 1. Check DuckDB Target Cache
+        if not os.path.exists(self.exporter.db_path):
+            print(f"\n[PRE-FLIGHT ERROR]: Target DuckDB cache not found at '{self.exporter.db_path}'!")
+            print("Ensure persistent DuckDB target database exists before starting Arctic pipeline.")
+            sys.exit(1)
+        print(f"[OK] Source DuckDB Database: {self.exporter.db_path}")
+
+        # 2. Check Disk Space
+        try:
+            total_b, used_b, free_b = shutil.disk_usage(self.root_dir if os.path.exists(self.root_dir) else ".")
+            free_gb = free_b / (1024.0 ** 3)
+            # Full 10.3M requires ~35GB buffer; 1 chunk requires ~2GB
+            req_gb = 35.0 if (self.limit_targets is None and self.limit_chunks is None) else 2.0
+            print(f"[OK] Available Disk Space:  {free_gb:.2f} GB (Required Buffer: {req_gb:.2f} GB)")
+            if free_gb < req_gb:
+                print(f"\n[PRE-FLIGHT ERROR]: Insufficient free disk space ({free_gb:.2f} GB < {req_gb:.2f} GB)!")
+                sys.exit(1)
+        except Exception as e:
+            print(f"[WARN] Disk space check warning: {e}")
+
+        # 3. Check Kernel Slug Format
+        if "YOUR_KAGGLE_USERNAME" in self.kernel_slug or "/" not in self.kernel_slug:
+            print(f"\n[PRE-FLIGHT ERROR]: Invalid Kaggle kernel slug: '{self.kernel_slug}'!")
+            print("Please configure your real Kaggle kernel in config/arctic_gpu.yaml (e.g. 'rajeshshitap/arctic-entity-resolution-worker').")
+            sys.exit(1)
+        print(f"[OK] Kaggle Kernel Slug:     {self.kernel_slug}")
+
+        # 4. Check Kaggle CLI and Live Authentication
+        if not skip_kaggle:
+            auth_ok, auth_msg = self.kaggle_ctrl.check_kaggle_auth()
+            if not auth_ok:
+                print(f"\n[PRE-FLIGHT KAGGLE ERROR]: {auth_msg}")
+                print("Run 'kaggle auth login' to authenticate with Kaggle OAuth before launching GPU jobs.")
+                sys.exit(1)
+            print(f"[OK] Kaggle API Connection:  {auth_msg}")
+
+        print("[OK] All Pre-Flight Validation Checks PASSED.")
+        print("=" * 80 + "\n")
+
     def run_pipeline(
         self,
         skip_export: bool = False,
@@ -292,6 +339,9 @@ class ArcticGPUOrchestrator:
         print(f"Target Universe: {EXPECTED_TOTAL_TARGETS:,} records | Model: {self.model_name}")
         print(f"Initial Process RSS: {get_current_rss_mb():.2f} MB")
         print("=" * 80)
+
+        # Pre-flight Validation
+        self.validate_preflight(skip_kaggle=skip_kaggle)
 
         # 1. Export Stage
         if not skip_export:
@@ -312,12 +362,8 @@ class ArcticGPUOrchestrator:
         # 2. Kaggle Execution Stage
         if not skip_kaggle:
             print("\n" + "=" * 80)
-            print(f"[Stage 2: Kaggle GPU Worker] Validating credentials and processing {total_chunks} chunks...")
+            print(f"[Stage 2: Kaggle GPU Worker] Processing {total_chunks} chunks on remote GPU...")
             print("=" * 80)
-
-            auth_ok, auth_msg = self.kaggle_ctrl.check_kaggle_auth()
-            if not auth_ok:
-                print(f"\n[KAGGLE AUTH ERROR]: {auth_msg}")
                 print("Aborting Kaggle stage. Fix credentials or use '--skip-kaggle'.")
                 sys.exit(1)
 

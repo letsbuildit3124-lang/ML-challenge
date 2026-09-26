@@ -2,8 +2,8 @@
 # Used by python3 -m src.arctic_pipeline --gpu
 
 kaggle:
-  # Replace with your Kaggle username / kernel slug
-  kernel: "YOUR_KAGGLE_USERNAME/arctic-entity-resolution-worker"
+  # Dedicated Arctic ER worker kernel slug on Kaggle
+  kernel: "rajeshshitap/arctic-entity-resolution-worker"
   # Accelerator choices: NvidiaL4 (recommended), NvidiaTeslaT4, NvidiaA100
   accelerator: "NvidiaL4"
   # Maximum allowed time per Kaggle kernel execution in seconds (default: 3600 = 1 hour)
@@ -17,10 +17,10 @@ embedding:
   # Challenge-permitted 384-d dense representation model
   model_name: "themelder/arctic-embed-xs-entity-resolution"
   dimension: 384
-  # Batch size for GPU inference on Kaggle (256-512 recommended for L4/T4)
+  # Batch size for GPU inference on Kaggle (256 recommended for L4/T4)
   batch_size: 256
-  # Use FP16 half-precision for fast GPU throughput
-  fp16: true
+  # Use standard FP32 precision for initial validation (set true only if explicitly testing FP16)
+  fp16: false
   # Normalize vectors so cosine similarity is dot product
   normalize_embeddings: true
 

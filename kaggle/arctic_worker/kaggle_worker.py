@@ -2,10 +2,12 @@
 Kaggle GPU Worker for Arctic Entity Resolution Embeddings.
 Runs inside a Kaggle Kernel / Notebook environment to encode target text chunks on GPU.
 
-Compliance:
+Compliance & Determinism:
 - Zero external data lookups (No web scraping, no external APIs).
 - Uses only challenge-provided data & approved Arctic ER model.
-- High-throughput batched GPU inference with FP16 / FP32 precision and L2 normalization.
+- Deterministic single-chunk input discovery.
+- Standard precision (FP32) by default; configurable FP16 for CUDA.
+- Output files strictly prefixed with the input chunk name.
 """
 
 import os
@@ -23,7 +25,7 @@ EMBEDDING_DIM = 384
 BATCH_SIZE = 256
 
 def compute_sha256(file_path: str) -> str:
-    """Computes SHA256 hash of a file."""
+    """Computes SHA256 hash of a file in streaming 64KB blocks."""
     hasher = hashlib.sha256()
     with open(file_path, "rb") as f:
         while chunk := f.read(65536):
@@ -47,29 +49,52 @@ def run_worker():
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    
+    # Check FP16 preference (Default: False for maximum stability/compatibility)
+    want_fp16 = os.environ.get("ARCTIC_FP16", "0").lower() in ("1", "true", "yes")
+    use_fp16 = want_fp16 and (device == "cuda")
+    precision_label = "FP16 (Half Precision)" if use_fp16 else "FP32 (Standard Precision)"
+
     print(f"Device:           {device} ({gpu_name})")
+    print(f"Precision:        {precision_label}")
     print(f"PyTorch Version:  v{torch.__version__}")
     print(f"Target Model:     {MODEL_NAME}")
     print(f"Embedding Dim:    {EMBEDDING_DIM}")
 
-    # 2. Locate Input Parquet Chunk
-    # Searches current directory or /kaggle/working or /kaggle/input
+    # 2. Deterministic Input Parquet Chunk Discovery
+    # Look for candidate input Parquet files in staging/working directories
     search_dirs = [".", "/kaggle/working", "/kaggle/input"]
-    input_file = None
+    candidates = []
+    seen_paths = set()
+
     for d in search_dirs:
         if os.path.exists(d):
-            for f in sorted(os.listdir(d)):
-                if f.endswith(".parquet") and not f.endswith("_ids.parquet"):
-                    input_file = os.path.join(d, f)
-                    break
-        if input_file:
-            break
+            for root_p, _, files in os.walk(d):
+                for f in sorted(files):
+                    if f.endswith(".parquet") and not f.endswith("_ids.parquet"):
+                        full_path = os.path.abspath(os.path.join(root_p, f))
+                        if full_path not in seen_paths:
+                            seen_paths.add(full_path)
+                            candidates.append(full_path)
 
-    if not input_file:
-        print("[ERROR] No input Parquet chunk found in workspace! Exiting.")
+    if len(candidates) == 0:
+        print("\n[FATAL ERROR]: No input Parquet chunk found in workspace search directories ([., /kaggle/working, /kaggle/input])!")
         sys.exit(1)
 
+    if len(candidates) > 1:
+        print(f"\n[FATAL ERROR]: Multiple candidate input Parquet files found ({len(candidates)} files):")
+        for c in candidates:
+            print(f"  - {c}")
+        print("Expected exactly ONE input Parquet chunk per execution. Halting for deterministic safety.")
+        sys.exit(1)
+
+    input_file = candidates[0]
+    input_basename = os.path.basename(input_file)
+    out_prefix = os.path.splitext(input_basename)[0]
+
     print(f"Input Parquet:    {input_file}")
+    print(f"Output Prefix:    {out_prefix}")
+
     df = pl.read_parquet(input_file)
     n_rows = len(df)
     print(f"Total Records:    {n_rows:,}")
@@ -97,16 +122,20 @@ def run_worker():
     gc.collect()
 
     # 4. Load Model
-    print(f"[Worker] Loading model {MODEL_NAME} on {device}...")
+    print(f"[Worker] Loading model {MODEL_NAME} on {device} ({precision_label})...")
     try:
         from sentence_transformers import SentenceTransformer
         model = SentenceTransformer(MODEL_NAME, device=device)
+        if use_fp16:
+            model = model.half()
         use_st = True
     except Exception as e:
-        print(f"[Worker] SentenceTransformers load failed ({e}). Using Transformers...")
+        print(f"[Worker] SentenceTransformers load failed ({e}). Using Transformers fallback...")
         from transformers import AutoTokenizer, AutoModel
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         model = AutoModel.from_pretrained(MODEL_NAME).to(device)
+        if use_fp16:
+            model = model.half()
         model.eval()
         use_st = False
 
@@ -116,7 +145,6 @@ def run_worker():
     
     if use_st:
         with torch.inference_mode():
-            # encode with FP16 if on CUDA
             embeddings = model.encode(
                 texts,
                 batch_size=BATCH_SIZE,
@@ -138,7 +166,7 @@ def run_worker():
                 pooled = sum_emb / sum_mask
                 pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
                 all_embs.append(pooled.cpu().numpy().astype(np.float32))
-                if i % 10000 == 0:
+                if i % 10000 == 0 and device == "cuda":
                     torch.cuda.empty_cache()
         embeddings = np.vstack(all_embs)
 
@@ -151,8 +179,7 @@ def run_worker():
     norms = np.linalg.norm(embeddings, axis=1)
     assert np.all(np.isclose(norms, 1.0, atol=1e-3)), "Embeddings not L2 normalized!"
 
-    # 7. Save Outputs
-    out_prefix = os.path.splitext(os.path.basename(input_file))[0]
+    # 7. Save Outputs Derived Deterministically from Input Filename
     out_emb_path = f"{out_prefix}_embeddings.npy"
     out_ids_path = f"{out_prefix}_ids.parquet"
     out_meta_path = f"{out_prefix}_meta.json"
@@ -168,9 +195,11 @@ def run_worker():
 
     metadata = {
         "chunk_id": out_prefix,
+        "input_filename": input_basename,
         "model_name": MODEL_NAME,
         "embedding_dimension": EMBEDDING_DIM,
         "dtype": "float32",
+        "precision_used": precision_label,
         "row_count": n_rows,
         "first_target_id": ids_list[0] if ids_list else "",
         "last_target_id": ids_list[-1] if ids_list else "",

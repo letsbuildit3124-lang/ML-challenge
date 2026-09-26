@@ -29,8 +29,9 @@ This guide explains how to execute automated GPU-accelerated Arctic dense embedd
 +-----------------------------------------------------------------------------------+
 |                            KAGGLE REMOTE GPU WORKER                               |
 |                                                                                   |
-|  - Receives chunk_XXXXXX.parquet                                                  |
-|  - Encodes using Arctic ER on Nvidia L4 / T4 (FP16 Batched Inference)            |
+|  - Kernel Slug: rajeshshitap/arctic-entity-resolution-worker                     |
+|  - Deterministic Single-File Discovery (chunk_XXXXXX.parquet)                     |
+|  - Encodes using Arctic ER on Nvidia L4 / T4 (Batched FP32 Inference)             |
 |  - Generates L2-Normalized float32 embeddings + Positional Target IDs             |
 |  - Computes Output SHA256 & writes metadata                                       |
 +-----------------------------------------------------------------------------------+
@@ -59,30 +60,43 @@ This guide explains how to execute automated GPU-accelerated Arctic dense embedd
 
 ## 2. One-Time Setup & Authentication
 
-### Step 1: Install Kaggle CLI (if not already installed)
+### Step 1: Install Kaggle CLI and PyYAML (if needed)
 ```bash
 pip install kaggle pyyaml
 ```
 
-### Step 2: Configure Kaggle API Token
-1. Go to [https://www.kaggle.com/settings](https://www.kaggle.com/settings) $\to$ **API** $\to$ Click **Create New Token**.
-2. Download `kaggle.json` and place it on your EC2 instance:
-   ```bash
-   mkdir -p ~/.kaggle
-   mv /path/to/downloaded/kaggle.json ~/.kaggle/kaggle.json
-   chmod 600 ~/.kaggle/kaggle.json
-   ```
-3. Test authentication:
-   ```bash
-   kaggle --version
-   ```
+### Step 2: Kaggle Authentication via OAuth
+Authenticate using the standard Kaggle CLI OAuth flow:
+```bash
+kaggle auth login
+```
+*(Alternatively, place your `kaggle.json` API token in `~/.kaggle/kaggle.json` with permissions `chmod 600 ~/.kaggle/kaggle.json`)*.
 
-### Step 3: Configure `config/arctic_gpu.yaml`
-Open `config/arctic_gpu.yaml` and set your Kaggle username:
+Test that the CLI connection is live:
+```bash
+kaggle kernels list --page-size 1
+```
+
+### Step 3: Verified Configuration (`config/arctic_gpu.yaml`)
+`config/arctic_gpu.yaml` is pre-configured with your kernel slug:
 ```yaml
 kaggle:
-  kernel: "YOUR_KAGGLE_USERNAME/arctic-entity-resolution-worker"
+  kernel: "rajeshshitap/arctic-entity-resolution-worker"
   accelerator: "NvidiaL4" # or NvidiaTeslaT4
+  timeout_seconds: 3600
+
+embedding:
+  model_name: "themelder/arctic-embed-xs-entity-resolution"
+  dimension: 384
+  batch_size: 256
+  fp16: false # Standard precision for initial validation
+
+pipeline:
+  chunk_size: 100000
+  chunks_per_job: 1
+  max_retries: 3
+  dense_top_k: 50
+  resume: true
 ```
 
 ---
@@ -90,13 +104,13 @@ kaggle:
 ## 3. Operational Workflow Commands
 
 ### Step A: Verify Execution Plan (Dry-Run)
-Verify that paths, chunk sizes, and storage limits are valid without making remote calls:
+Verify configuration, paths, target counts, and disk space without executing any remote jobs or altering files:
 ```bash
 PYTHONPATH=. python3 -m src.arctic_pipeline --gpu --dry-run
 ```
 
 ### Step B: Run 1-Chunk Validation Test (100k targets)
-Run an isolated single-chunk end-to-end smoke test:
+Run an isolated single-chunk end-to-end test to verify GPU execution on Kaggle, output retrieval, and strict positional verification:
 ```bash
 PYTHONPATH=. python3 -m src.arctic_pipeline --gpu --limit-chunks 1
 ```
@@ -111,18 +125,21 @@ PYTHONPATH=. python3 -m src.arctic_pipeline --gpu
 
 ## 4. Recovery & Resumability
 
-The pipeline is completely fault-tolerant and saves checkpoint status to `cache/arctic_gpu/manifest.json`.
+The pipeline is completely fault-tolerant and checks `cache/arctic_gpu/manifest.json`. Completed chunks are automatically skipped.
 
-- **If EC2 or Kaggle disconnects**: Simply re-run `python3 -m src.arctic_pipeline --gpu`. It automatically skips already completed & verified chunks.
-- **To skip export and continue Kaggle execution**:
+- **Standard Resume**: Re-run the main command (it automatically resumes from the first pending/failed chunk):
+  ```bash
+  PYTHONPATH=. python3 -m src.arctic_pipeline --gpu
+  ```
+- **Skip Export Stage** (if Parquet chunks are already exported):
   ```bash
   PYTHONPATH=. python3 -m src.arctic_pipeline --gpu --skip-export
   ```
-- **To rebuild only the FAISS index from downloaded embeddings**:
+- **Rebuild FAISS Only** (after all chunks are downloaded):
   ```bash
   PYTHONPATH=. python3 -m src.arctic_pipeline --gpu --skip-export --skip-kaggle
   ```
-- **To run only the benchmark against the finished index**:
+- **Run Benchmark Only** (against existing FAISS index):
   ```bash
   PYTHONPATH=. python3 -m src.arctic_pipeline --gpu --skip-export --skip-kaggle --skip-faiss
   ```
@@ -133,31 +150,29 @@ The pipeline is completely fault-tolerant and saves checkpoint status to `cache/
 
 | Storage Component | Approximate Size | Location / Notes |
 | :--- | :--- | :--- |
-| **Input Parquet Chunks** | ~1.2 GB | `cache/arctic_gpu/input/` (Compressed Zstandard) |
-| **Chunk Output Embeddings** | ~15.8 GB | `cache/arctic_gpu/output/` (104 chunk `.npy` files) |
-| **Merged Target Memmap** | ~15.8 GB | `cache/embeddings/arctic/target_embeddings.npy` (Disk-backed) |
-| **Merged Target IDs** | ~180 MB | `cache/embeddings/arctic/target_ids.json` |
-| **FAISS IVF-PQ Index** | ~495 MB | `cache/ann/arctic/target.index` (Bounded RAM < 1 GB) |
-| **Total Free Disk Buffer Required** | **~35 GB** | Verified before job staging |
+| **Input Parquet Chunks** ($104$ chunks $\times 100\text{k}$) | $\approx 1.2\text{ GB}$ | Disk (`cache/arctic_gpu/input/`) |
+| **Downloaded Chunk Embeddings** | $\approx 15.8\text{ GB}$ | Disk (`cache/arctic_gpu/output/`) |
+| **Merged Persistent Target Memmap** | $\approx 15.8\text{ GB}$ | Disk (`cache/embeddings/arctic/`) |
+| **Target IDs JSON Index** | $\approx 180\text{ MB}$ | Disk (`cache/embeddings/arctic/`) |
+| **FAISS IVF-PQ Index ($M=48$)** | $\approx 495\text{ MB}$ | Disk & RAM ($< 1\text{ GB}$ resident RAM) |
+| **Total Free Disk Buffer Recommended** | **$\approx 35\text{ GB}$** | Checked automatically before staging |
 
 ---
 
 ## 6. Model License & Competition Compliance
 
-- **Model Used**: `themelder/arctic-embed-xs-entity-resolution` ($384$-dimensional dense representation, Apache-2.0 License).
+- **Model**: `themelder/arctic-embed-xs-entity-resolution` ($22.6\text{M}$ parameters, Apache-2.0 License).
 - **Rule Compliance**:
-  - Max parameters: $22\text{M} \le 8\text{B}$ (Compliant).
-  - External lookup: **ZERO external data lookups** (The worker encodes only the challenge text columns).
-  - License: Apache-2.0 open license.
+  - Model Size: $22.6\text{M} \le 8\text{B}$ parameter cap (**Compliant**).
+  - License: Apache-2.0 open license (**Compliant**).
+  - External Lookups: **Strictly ZERO external lookups** (The worker encodes solely the competition-provided text fields).
 
 ---
 
 ## 7. Disabling Arctic & Returning to Pure V4 Pipeline
 
-Arctic dense retrieval is an independent, additive branch. The base V4 sparse + deterministic pipeline remains fully functional without it.
-
-To keep Arctic disabled in candidate generation:
-1. Ensure `use_arctic: false` in `config/arctic_gpu.yaml`.
+Arctic is an independent candidate retrieval branch. To keep it disabled:
+1. In `config/arctic_gpu.yaml`, keep `retrieval.use_arctic: false`.
 2. Run standard V4 retrieval:
    ```bash
    PYTHONPATH=. python3 -m src.v4_recall_benchmark --s1-count 1000 --budget 250

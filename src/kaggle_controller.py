@@ -60,40 +60,44 @@ class KaggleController:
 
     def check_kaggle_auth(self) -> Tuple[bool, str]:
         """
-        Validates Kaggle CLI installation and authentication credentials.
+        Validates Kaggle CLI installation and verifies live API authentication.
+        Supports standard OAuth ('kaggle auth login') and API tokens transparently.
         """
-        # 1. Check if kaggle command exists
+        # 1. Check if kaggle CLI is available on PATH
         try:
-            res = subprocess.run(
+            res_ver = subprocess.run(
                 ["kaggle", "--version"],
                 capture_output=True,
                 text=True,
                 check=False
             )
-            if res.returncode != 0:
-                return False, f"Kaggle CLI returned error: {res.stderr.strip()}"
-            cli_version = res.stdout.strip()
+            if res_ver.returncode != 0:
+                return False, f"Kaggle CLI returned error: {res_ver.stderr.strip()}"
+            cli_version = res_ver.stdout.strip()
         except FileNotFoundError:
             return False, "Kaggle CLI ('kaggle') not found on PATH. Install via 'pip install kaggle'."
 
-        # 2. Check credentials (~/.kaggle/kaggle.json or env vars)
-        kaggle_json = os.path.expanduser("~/.kaggle/kaggle.json")
-        has_env = bool(os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"))
-        has_file = os.path.exists(kaggle_json)
-
-        if not (has_file or has_env):
-            return False, (
-                "Kaggle credentials not found! Place your 'kaggle.json' API token in ~/.kaggle/kaggle.json "
-                "or set KAGGLE_USERNAME and KAGGLE_KEY environment variables."
-            )
-
+        # 2. Check kernel slug configuration
         if "YOUR_KAGGLE_USERNAME" in self.kernel_slug:
             return False, (
                 "Kaggle kernel slug is unconfigured ('YOUR_KAGGLE_USERNAME'). "
-                "Update config/arctic_gpu.yaml with your real Kaggle username (e.g. 'john_doe/arctic-worker')."
+                "Update config/arctic_gpu.yaml with your real Kaggle username (e.g. 'rajeshshitap/arctic-entity-resolution-worker')."
             )
 
-        return True, f"Kaggle CLI ready ({cli_version}) with valid credentials."
+        # 3. Validate live API authentication by running a lightweight command
+        try:
+            res_auth = subprocess.run(
+                ["kaggle", "kernels", "list", "--page-size", "1"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if res_auth.returncode != 0:
+                return False, "Kaggle API authentication failed. Run: kaggle auth login"
+        except Exception as e:
+            return False, f"Failed to execute Kaggle authentication check: {e}"
+
+        return True, f"Kaggle CLI ready ({cli_version}) with verified active authentication."
 
     def prepare_job_package(
         self,

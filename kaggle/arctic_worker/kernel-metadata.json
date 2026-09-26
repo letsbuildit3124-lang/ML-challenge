@@ -1,5 +1,5 @@
 {
-  "id": "YOUR_KAGGLE_USERNAME/arctic-entity-resolution-worker",
+  "id": "rajeshshitap/arctic-entity-resolution-worker",
   "title": "Arctic Entity Resolution Worker",
   "code_file": "kaggle_worker.py",
   "language": "python",
