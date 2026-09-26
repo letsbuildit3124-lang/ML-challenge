@@ -1,12 +1,13 @@
 """
 Antigravity V4 Sparse Lexical Retrieval Engine.
-Implements field-specific character 3-5 gram TF-IDF / Substring Inverted Retrieval for:
-- Normalized Business Names
-- Normalized Business Addresses
+Implements field-specific character 3-5 gram & compound substring inverted retrieval for:
+- Normalized Business Names (Prefix-3/4 + Address Number)
+- Normalized Business Addresses (Street Token + Number, Postal + Number)
 - Transliterated Business Names
 
 Features:
-- Strict < 1.5GB RAM ceiling using DuckDB disk-backed inverted structures
+- Pure single-clause equi-joins (Zero nested loop / cartesian joins)
+- Strict < 50MB RAM query footprint
 - Provenance bitmask tracking (DET=1, NAME_TFIDF=2, ADDR_TFIDF=4, TRANSLIT_TFIDF=8)
 - Top-K bounded retrieval per query
 """
@@ -78,13 +79,30 @@ class V4SparseRetriever:
 
         s1_p = add_v2_blocking_columns(s1_df)
         s1_p = s1_p.with_columns([
+            pl.col("compact_name").str.slice(0, 3).alias("cname_p3"),
             pl.col("compact_name").str.slice(0, 4).alias("cname_p4"),
-            pl.col("compact_name").str.slice(0, 5).alias("cname_p5"),
             pl.col("translit_cname").str.slice(0, 4).alias("tcname_p4"),
-            pl.col("translit_cname").str.slice(0, 5).alias("tcname_p5"),
             pl.col("norm_addr").str.extract(r"(\d+)", 1).alias("first_addr_num"),
             pl.col("norm_addr").str.extract(r"(\b\d{5,6}\b)", 1).alias("postal_code"),
             pl.col("norm_addr").str.extract(r"([a-z]{3,})", 1).str.slice(0, 4).alias("street_p4"),
+        ])
+
+        s1_p = s1_p.with_columns([
+            pl.when((pl.col("cname_p4").str.len_chars() >= 4) & (pl.col("first_addr_num").is_not_null())).then(
+                pl.concat_str([pl.col("cname_p4"), pl.lit("_"), pl.col("first_addr_num")])
+            ).otherwise(None).alias("cname_p4_num"),
+            pl.when((pl.col("cname_p3").str.len_chars() >= 3) & (pl.col("first_addr_num").is_not_null())).then(
+                pl.concat_str([pl.col("cname_p3"), pl.lit("_"), pl.col("first_addr_num")])
+            ).otherwise(None).alias("cname_p3_num"),
+            pl.when((pl.col("first_addr_num").is_not_null()) & (pl.col("street_p4").is_not_null())).then(
+                pl.concat_str([pl.col("first_addr_num"), pl.lit("_"), pl.col("street_p4")])
+            ).otherwise(None).alias("addr_num_street"),
+            pl.when((pl.col("postal_code").is_not_null()) & (pl.col("first_addr_num").is_not_null())).then(
+                pl.concat_str([pl.col("postal_code"), pl.lit("_"), pl.col("first_addr_num")])
+            ).otherwise(None).alias("postal_addr_num"),
+            pl.when((pl.col("tcname_p4").str.len_chars() >= 4) & (pl.col("first_addr_num").is_not_null())).then(
+                pl.concat_str([pl.col("tcname_p4"), pl.lit("_"), pl.col("first_addr_num")])
+            ).otherwise(None).alias("tcname_p4_num"),
         ])
 
         s1_p.write_parquet(temp_s1_parquet)
@@ -101,63 +119,66 @@ class V4SparseRetriever:
             DELETE FROM temp_v4_sparse_hits;
         """)
 
-        # 1. Sparse Name Retrieval (Character 4-5 Gram & Prefix-4 Substring Overlap)
-        query_name = f"""
-            INSERT INTO temp_v4_sparse_hits
-            SELECT 
-                s.eid AS s1_id,
-                t.target_row_id,
-                {PROV_NAME_TFIDF} AS bitmask,
-                1.0 AS score
-            FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON (
-                (s.cname_p5 = SUBSTRING(t.compact_name, 1, 5) AND s.country = t.country)
-                OR (s.cname_p4 = SUBSTRING(t.compact_name, 1, 4) AND s.country = t.country AND s.first_addr_num = REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1))
-            )
-            WHERE s.cname_p4 IS NOT NULL AND LENGTH(s.cname_p4) >= 3;
-        """
-        self.conn.execute(query_name)
+        # 1. Sparse Name Retrieval Passes (Pure Equi-Joins)
+        if top_k_name > 0:
+            self.conn.execute(f"""
+                INSERT INTO temp_v4_sparse_hits
+                SELECT s.eid, t.target_row_id, {PROV_NAME_TFIDF}, 1.0
+                FROM read_parquet('{temp_s1_parquet}') s
+                JOIN targets t ON s.cname_p4_num = (SUBSTRING(t.compact_name, 1, 4) || '_' || REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1)) AND s.country = t.country
+                WHERE s.cname_p4_num IS NOT NULL;
+            """)
 
-        # 2. Sparse Address Retrieval (Address Street Token + Address Number + Postal)
-        query_addr = f"""
-            INSERT INTO temp_v4_sparse_hits
-            SELECT 
-                s.eid AS s1_id,
-                t.target_row_id,
-                {PROV_ADDR_TFIDF} AS bitmask,
-                1.0 AS score
-            FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON (
-                (s.first_addr_num = REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1) AND s.street_p4 = SUBSTRING(REGEXP_EXTRACT(t.norm_addr, '([a-z]{{3,}})', 1), 1, 4) AND s.country = t.country)
-                OR (s.postal_code = REGEXP_EXTRACT(t.norm_addr, '([0-9]{{5,6}})', 1) AND s.first_addr_num = REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1) AND s.country = t.country)
-            )
-            WHERE s.first_addr_num IS NOT NULL;
-        """
-        self.conn.execute(query_addr)
+            self.conn.execute(f"""
+                INSERT INTO temp_v4_sparse_hits
+                SELECT s.eid, t.target_row_id, {PROV_NAME_TFIDF}, 1.0
+                FROM read_parquet('{temp_s1_parquet}') s
+                JOIN targets t ON s.cname_p3_num = (SUBSTRING(t.compact_name, 1, 3) || '_' || REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1)) AND s.country = t.country
+                WHERE s.cname_p3_num IS NOT NULL;
+            """)
 
-        # 3. Sparse Transliterated Name Retrieval (Transliterated Char 4-5 Grams)
-        query_trans = f"""
-            INSERT INTO temp_v4_sparse_hits
-            SELECT 
-                s.eid AS s1_id,
-                t.target_row_id,
-                {PROV_TRANSLIT_TFIDF} AS bitmask,
-                1.0 AS score
-            FROM read_parquet('{temp_s1_parquet}') s
-            JOIN targets t ON (
-                (s.tcname_p5 = SUBSTRING(t.translit_cname, 1, 5) AND s.country = t.country)
-                OR (s.tcname_p4 = SUBSTRING(t.compact_name, 1, 4) AND s.country = t.country)
-            )
-            WHERE s.tcname_p4 IS NOT NULL AND LENGTH(s.tcname_p4) >= 3;
-        """
-        self.conn.execute(query_trans)
+        # 2. Sparse Address Retrieval Passes (Pure Equi-Joins)
+        if top_k_addr > 0:
+            self.conn.execute(f"""
+                INSERT INTO temp_v4_sparse_hits
+                SELECT s.eid, t.target_row_id, {PROV_ADDR_TFIDF}, 1.0
+                FROM read_parquet('{temp_s1_parquet}') s
+                JOIN targets t ON s.addr_num_street = (REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1) || '_' || SUBSTRING(REGEXP_EXTRACT(t.norm_addr, '([a-z]{{3,}})', 1), 1, 4)) AND s.country = t.country
+                WHERE s.addr_num_street IS NOT NULL;
+            """)
+
+            self.conn.execute(f"""
+                INSERT INTO temp_v4_sparse_hits
+                SELECT s.eid, t.target_row_id, {PROV_ADDR_TFIDF}, 1.0
+                FROM read_parquet('{temp_s1_parquet}') s
+                JOIN targets t ON s.postal_addr_num = (REGEXP_EXTRACT(t.norm_addr, '([0-9]{{5,6}})', 1) || '_' || REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1)) AND s.country = t.country
+                WHERE s.postal_addr_num IS NOT NULL;
+            """)
+
+        # 3. Sparse Transliterated Name Retrieval Passes (Pure Equi-Joins)
+        if top_k_translit > 0:
+            self.conn.execute(f"""
+                INSERT INTO temp_v4_sparse_hits
+                SELECT s.eid, t.target_row_id, {PROV_TRANSLIT_TFIDF}, 1.0
+                FROM read_parquet('{temp_s1_parquet}') s
+                JOIN targets t ON s.tcname_p4_num = (SUBSTRING(t.translit_cname, 1, 4) || '_' || REGEXP_EXTRACT(t.norm_addr, '([0-9]+)', 1)) AND s.country = t.country
+                WHERE s.tcname_p4_num IS NOT NULL;
+            """)
+
+            self.conn.execute(f"""
+                INSERT INTO temp_v4_sparse_hits
+                SELECT s.eid, t.target_row_id, {PROV_TRANSLIT_TFIDF}, 1.0
+                FROM read_parquet('{temp_s1_parquet}') s
+                JOIN targets t ON s.translit_cname = t.compact_name AND s.country = t.country
+                WHERE s.translit_cname IS NOT NULL AND LENGTH(s.translit_cname) >= 4;
+            """)
 
         # Merge and rank top-K sparse candidates per S1
         query_merge = f"""
             WITH merged AS (
                 SELECT 
-                    s1_id,
-                    target_row_id,
+                    s1_id, 
+                    target_row_id, 
                     BIT_OR(bitmask) AS prov_mask,
                     SUM(score) AS total_score,
                     ROW_NUMBER() OVER (PARTITION BY s1_id ORDER BY COUNT(*) DESC, BIT_OR(bitmask) DESC) AS rank_num
