@@ -453,10 +453,8 @@ def run_training_pipeline(
 
         # Step 4: Shard Generation & Verification Gate
         shards_dir = cache_mgr.shards_dir
-        shard_files = list(shards_dir.glob("shard_*.parquet"))
-        if not shard_files:
-            logger.info("[Step 4/5] Shards missing on disk. Generating real candidate shards for 10.32M targets...")
-            generate_training_shards(config, cache_mgr, retriever, s1_records_map, gt_map)
+        logger.info("[Step 4/5] Generating/verifying candidate shards for full 10.32M target universe...")
+        generate_training_shards(config, cache_mgr, retriever, s1_records_map, gt_map)
 
         # Run Verification Gate
         run_pre_training_gate(shards_dir, Path(config.paths.artifacts_dir))
