@@ -1,13 +1,20 @@
 """
 ER-X Ultimate: Centralized Configuration Management
+Zero external dependency for default configuration loading.
 """
 
 from __future__ import annotations
 import os
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import yaml
+
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
 
 
 @dataclass
@@ -93,8 +100,12 @@ class UltimateConfig:
     @classmethod
     def load(cls, config_path: Optional[str] = None) -> "UltimateConfig":
         if config_path and os.path.exists(config_path):
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+            if config_path.endswith((".yaml", ".yml")) and HAS_YAML:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+            else:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
             return cls(
                 system=SystemConfig(**data.get("system", {})),
                 paths=PathConfig(**data.get("paths", {})),
