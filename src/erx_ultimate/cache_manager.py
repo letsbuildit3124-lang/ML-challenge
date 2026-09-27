@@ -81,7 +81,7 @@ class CacheManager:
 
                     CREATE OR REPLACE TABLE {table_name} AS
                     SELECT 
-                        CAST(REPLACE(column0, 'S1-', '') AS BIGINT) AS source1_id,
+                        CAST(REPLACE(source1_entity_id, 'S1-', '') AS BIGINT) AS source1_id,
                         CASE 
                             WHEN match_id LIKE 'S2-%' THEN CAST(REPLACE(match_id, 'S2-', '') AS BIGINT)
                             WHEN match_id LIKE 'S3-%' THEN CAST(REPLACE(match_id, 'S3-', '') AS BIGINT)
@@ -94,8 +94,8 @@ class CacheManager:
                         END AS target_source
                     FROM (
                         SELECT 
-                            column0, 
-                            unnest(string_split(column1, ',')) AS match_id
+                            source1_entity_id, 
+                            unnest(string_split(matched_entity_ids, ',')) AS match_id
                         FROM raw_gt
                     )
                     WHERE match_id != '';
@@ -221,22 +221,33 @@ class CacheManager:
 
 
 def prepare_cache(config: UltimateConfig = CONFIG, clean: bool = False) -> None:
-    """Run full cache preparation: Ingestion, Normalization, CSR Inverted Indexes."""
+    """Run full cache preparation: Ingestion, Normalization, CSR Inverted Indexes, Learned Rules."""
+    from src.erx_ultimate.retrieval import ERXRetrievalEngine
+    from src.erx_ultimate.learned_rules import LearnedRulesEngine
+
     cache_mgr = CacheManager(config)
     if clean:
         cache_mgr.clean_cache()
 
-    logger.info("=== STEP 1: INGESTION & PARQUET PARTITIONING ===")
+    logger.info("=== STEP 1/3: INGESTION & PARQUET PARTITIONING ===")
     cache_mgr.ingest_raw_tsv("train_s1", config.paths.train_s1)
     cache_mgr.ingest_raw_tsv("train_s2", config.paths.train_s2)
     cache_mgr.ingest_raw_tsv("train_s3", config.paths.train_s3)
     cache_mgr.ingest_raw_tsv("train_ground_truth", config.paths.train_ground_truth, is_ground_truth=True)
 
-    cache_mgr.build_normalized_parquet("train_s1", "train_s1")
+    s1_parquet = cache_mgr.build_normalized_parquet("train_s1", "train_s1")
     cache_mgr.build_normalized_parquet("train_s2", "train_s2")
     cache_mgr.build_normalized_parquet("train_s3", "train_s3")
 
-    logger.info("Cache preparation complete.")
+    logger.info("=== STEP 2/3: MINING LEARNED TYPO & ALIAS RULES ===")
+    rules_engine = LearnedRulesEngine(config)
+    rules_engine.fit_from_ground_truth(str(cache_mgr.db_path))
+
+    logger.info("=== STEP 3/3: BUILDING S1 CSR INVERTED INDEXES ===")
+    retriever = ERXRetrievalEngine(config)
+    retriever.build_s1_indexes(s1_parquet)
+
+    logger.info("All cache preparations, normalization, learned rules, and CSR indexes are ready!")
 
 
 if __name__ == "__main__":
