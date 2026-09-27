@@ -11,7 +11,7 @@ Provides:
 import re
 import unicodedata
 from typing import Dict, List, Set, Tuple, Optional, Any
-from src.erx.types import MultiViewRecord
+from src.erx.types import MultiViewRecord, char_ngrams_set
 
 # Multilingual legal corporate suffixes (French, Indian, European, and US forms)
 LEGAL_SUFFIXES_REGEX = (
@@ -221,9 +221,9 @@ class ERXNormalizer:
         sorted_token_name = " ".join(sorted(name_toks))
 
         # Precomputed n-gram sets (union of native and transliterated if non-ASCII)
-        c3_set = get_char_ngrams(norm_n, 3) | (get_char_ngrams(translit_n, 3) if not is_ascii else set())
-        c4_set = get_char_ngrams(norm_n, 4) | (get_char_ngrams(translit_n, 4) if not is_ascii else set())
-        c5_set = get_char_ngrams(norm_n, 5) | (get_char_ngrams(translit_n, 5) if not is_ascii else set())
+        c3_set = char_ngrams_set(norm_n, 3) | (char_ngrams_set(translit_n, 3) if not is_ascii else set())
+        c4_set = char_ngrams_set(norm_n, 4) | (char_ngrams_set(translit_n, 4) if not is_ascii else set())
+        c5_set = char_ngrams_set(norm_n, 5) | (char_ngrams_set(translit_n, 5) if not is_ascii else set())
 
         phonetic_sig = compute_phonetic_signature(translit_n if not is_ascii else norm_n)
 
@@ -233,9 +233,11 @@ class ERXNormalizer:
         addr_toks = norm_a.split() if norm_a else []
         addr_tok_set = set(addr_toks)
 
-        # Numeric signature
-        num_toks = [w for w in norm_a.split() if w.isdigit()]
+        # Numeric signature and address sets
+        num_toks = [w for w in addr_toks if w.isdigit()]
         numeric_sig = "-".join(sorted(num_toks)) if num_toks else ""
+        house_numbers = set(num_toks[:2]) if num_toks else set()
+        postal_codes = {w for w in num_toks if len(w) in (5, 6)}
 
         resolved_is_s2 = entity_id.startswith("S2-") if is_s2 is None else is_s2
         resolved_is_s3 = entity_id.startswith("S3-") if is_s3 is None else is_s3
@@ -256,6 +258,17 @@ class ERXNormalizer:
             norm_addr=norm_a,
             translit_addr=translit_a,
             numeric_signature=numeric_sig,
+            name_tokens=name_toks,
+            name_tok_set=name_tok_set,
+            translit_tokens=translit_toks,
+            translit_tok_set=translit_tok_set,
+            name_char3_set=c3_set,
+            name_char4_set=c4_set,
+            name_char5_set=c5_set,
+            addr_tokens=addr_toks,
+            addr_tok_set=addr_tok_set,
+            house_numbers=house_numbers,
+            postal_codes=postal_codes,
             is_s2=resolved_is_s2,
             is_s3=resolved_is_s3,
             is_name_missing=is_name_missing,
