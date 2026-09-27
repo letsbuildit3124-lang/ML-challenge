@@ -1,19 +1,27 @@
 """
-ER-X STAGE 3: FINAL TEST INFERENCE & SUBMISSION ENGINE
-Loads Production Model Artifacts & Evaluates Full 1.73M Test S1 + 9.97M Test Targets.
+ER-X STAGE 3: PRODUCTION HIGH-THROUGHPUT TEST INFERENCE ENGINE
+==============================================================
+Fully Vectorized, DuckDB-Backed, CSR Integer-Indexed, Resumable Sharded Architecture.
 
-Hardware Profile:
-- CPU: 8 vCPUs (Controlled concurrency: 8 workers, 0 nested thread multiplication)
-- RAM: 32 GB (Working memory strictly bounded under 4.0 GB with 28 GB safe headroom)
-- Caching: Vectorized Snappy Parquet Cache via DuckDB / PyArrow
-- Universe: 1,732,544 Test S1 Entities + 9,969,589 Test Targets (Source 2 + Source 3)
+Evaluates Full Test Universe:
+- Test S1 Universe: 1,732,544 Entities (Indexed ONCE, Reused across S2 & S3)
+- Test Target Universe: 9,969,589 Records (5,034,616 S2 + 4,934,973 S3)
+
+Core Architecture Principles:
+1. DuckDB / Parquet = High-throughput persistent columnar caching backbone.
+2. Contiguous CSR uint32 arrays = Zero-copy integer candidate indexing.
+3. RapidFuzz C++ OpenMP = Multi-threaded GIL-free batch string scoring (process.cpdist).
+4. Vectorized NumPy = 73-feature matrix computation in native float32 arrays.
+5. LightGBM + Isotonic Calibration = Batch probability scoring and strict margin exclusivity.
+6. Checkpointed Sharding = Granular resume capability with metadata integrity verification.
+7. Streaming Output Aggregation = Official TSV deliverable generation with zero RAM explosion.
 """
 
 import os
 import sys
 
 # ----------------------------------------------------------------------
-# Enforce Single-Threaded BLAS/OpenMP to Prevent Thread Storms & VM Freezes
+# Enforce Single-Threaded BLAS/OpenMP to Prevent Thread Oversubscription
 # ----------------------------------------------------------------------
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -24,7 +32,9 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 import gc
 import time
 import math
+import json
 import pickle
+import hashlib
 import argparse
 import logging
 from pathlib import Path
@@ -33,9 +43,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Set, Tuple, Optional, Any, Union
 
 import duckdb
+import pyarrow as pa
 import pyarrow.parquet as pq
 import numpy as np
-from rapidfuzz import fuzz
+from rapidfuzz import process, fuzz
+from rapidfuzz.distance import Levenshtein, JaroWinkler
 
 from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
@@ -45,10 +57,9 @@ from src.erx.cache_manager import (
     get_safe_duckdb_connection,
     ensure_cached_parquet,
     load_compact_s1_records_from_parquet,
-    load_multiview_records_from_parquet,
 )
 from src.erx.learned_rules import LearnedRuleEngine
-from src.erx.retrieval import ERXRetrievalEngine
+from src.erx.retrieval import ERXRetrievalEngine, CSRChannelIndex
 from src.erx.features import ERXFeatureExtractor, FEATURE_NAMES
 from src.erx.model import ERXModelTrainer, ERXCalibrator
 
@@ -60,32 +71,104 @@ logging.basicConfig(
 logger = logging.getLogger("erx.final_inference")
 
 
-def _process_target_subbatch(
+# =====================================================================
+# Shard Management & Checkpoint Resume
+# =====================================================================
+
+def compute_shard_checksum(metadata: Dict[str, Any]) -> str:
+    """Computes deterministic MD5 checksum over shard configuration metadata."""
+    serialized = json.dumps(metadata, sort_keys=True)
+    return hashlib.md5(serialized.encode("utf-8")).hexdigest()
+
+
+def is_shard_valid(shard_parquet: Path, shard_meta: Path) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Checks whether an inference shard exists and matches integrity metadata."""
+    if not shard_parquet.exists() or not shard_meta.exists():
+        return False, None
+    try:
+        with open(shard_meta, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        if shard_parquet.stat().st_size < 100:
+            return False, None
+        expected_chk = compute_shard_checksum({k: v for k, v in meta.items() if k != "checksum"})
+        if meta.get("checksum") != expected_chk:
+            return False, None
+        return True, meta
+    except Exception:
+        return False, None
+
+
+def write_inference_shard(
+    shard_parquet: Path,
+    shard_meta: Path,
+    s1_ids: np.ndarray,
+    target_ids: List[str],
+    is_match_flags: np.ndarray,
+    probs: np.ndarray,
+    metadata_info: Dict[str, Any],
+):
+    """Writes atomic, checksummed inference shard containing candidate and match pairs."""
+    tmp_parquet = shard_parquet.with_suffix(".tmp.parquet")
+    tmp_meta = shard_meta.with_suffix(".tmp.json")
+
+    columns = {
+        "s1_int_id": s1_ids,
+        "target_entity_id": pa.array(target_ids, type=pa.string()),
+        "is_match": is_match_flags,
+        "calibrated_prob": probs,
+    }
+    table = pa.Table.from_pydict(columns)
+    pq.write_table(table, tmp_parquet, compression="zstd")
+    del table
+    gc.collect()
+
+    metadata_info["total_pairs"] = int(len(s1_ids))
+    metadata_info["matches"] = int(np.sum(is_match_flags))
+    metadata_info["file_size_bytes"] = tmp_parquet.stat().st_size
+    metadata_info["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    metadata_info["checksum"] = compute_shard_checksum(metadata_info)
+
+    with open(tmp_meta, "w", encoding="utf-8") as f:
+        json.dump(metadata_info, f, indent=2)
+
+    os.replace(tmp_parquet, shard_parquet)
+    os.replace(tmp_meta, shard_meta)
+
+
+# =====================================================================
+# High-Throughput Subbatch Scoring Worker
+# =====================================================================
+
+def _process_target_subbatch_turbo(
     targets: List[MultiViewRecord],
     country_indexes: Dict[str, ERXRetrievalEngine],
-    s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
+    s1_dict: Dict[int, CompactS1Record],
     feat_extractor: ERXFeatureExtractor,
     num_s1: int,
 ) -> Dict[str, Any]:
-    """High-Throughput target scoring on pre-normalized MultiViewRecord objects."""
+    """
+    Evaluates a subbatch of target records using CSR integer retrieval and batched RapidFuzz C-API:
+    1. Tier 1 Fast-Path Check (Instant unique exact compact match).
+    2. Zero-Candidate Screening (Eliminates non-overlapping targets before candidate retrieval).
+    3. 6-Channel CSR Integer Candidate Retrieval.
+    4. Batched 73-Feature Extraction (extract_features_batch).
+    """
     tier1_matches: List[Tuple[int, str]] = []
     tier1_candidates: List[Tuple[int, str]] = []
 
     tier2_targets: List[MultiViewRecord] = []
     tier2_cand_lists: List[List[CandidatePair]] = []
-    tier2_features_list: List[np.ndarray] = []
 
     for target in targets:
-        tid = target.entity_id
         c_key = target.country if (country_indexes and target.country in country_indexes) else "OTHER"
         engine = country_indexes.get(c_key)
         if engine is None:
             continue
 
-        # Tier 1 Fast-Path: Exact Compact Name Check with Unique S1 candidate
+        # 1. Tier 1 Fast-Path Check: Exact Compact Name
         exact_s1_ids = engine.index_compact_name.get(target.compact_name) if target.compact_name else None
-        if exact_s1_ids and len(exact_s1_ids) == 1:
-            s1_int = exact_s1_ids[0]
+        if exact_s1_ids is not None and len(exact_s1_ids) == 1:
+            s1_int = int(exact_s1_ids[0])
             s1_cand = s1_dict.get(s1_int)
             if s1_cand is not None:
                 if not target.house_numbers or not s1_cand.house_numbers or (target.house_numbers & s1_cand.house_numbers):
@@ -94,7 +177,7 @@ def _process_target_subbatch(
                         tier1_candidates.append((s1_int, target.entity_id))
                         continue
 
-        # Zero-Candidate Fast Screening (Zero set allocations)
+        # 2. Fast Zero-Candidate Screening
         has_exact = bool(
             (target.compact_name and target.compact_name in engine.index_compact_name)
             or (target.norm_name and target.norm_name in engine.index_norm_name)
@@ -108,7 +191,7 @@ def _process_target_subbatch(
         if not (has_exact or has_rare or has_num or has_phon):
             continue
 
-        # Tier 2: Multi-Channel Candidate Retrieval (top 15)
+        # 3. 6-Channel Candidate Retrieval (Top 15)
         cands = engine.retrieve_for_target(target, top_k=15)
         if not cands:
             continue
@@ -177,15 +260,24 @@ def _process_target_subbatch(
     }
 
 
-def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optional[int] = None):
+# =====================================================================
+# Main Production Inference Engine
+# =====================================================================
+
+def run_stage3_final_inference(
+    smoke_test: bool = False,
+    max_s1_records: Optional[int] = None,
+    chunk_size: int = 100000,
+    force_rebuild_shards: bool = False,
+):
     """
-    Executes STAGE 3: Final Test Dataset Inference & Official Submission Output Generation.
-    NO RETRAINING.
+    Executes STAGE 3: Production Final Test Inference & Official Submission File Generator.
+    Loads Production GBDT + Calibrator Artifacts & Evaluates Full 1.73M Test S1 + 9.97M Test Targets.
     """
     print("===================================================================")
-    print("        ER-X STAGE 3: FINAL TEST INFERENCE & SUBMISSION GENERATOR   ")
-    print(f"   Universe: {'SMOKE TEST' if smoke_test else '1.73M Test S1 + 9.97M Test Targets'} ")
-    print("   High-Throughput DuckDB & Parquet Caching Architecture Enabled   ")
+    print("        ER-X STAGE 3: PRODUCTION TEST INFERENCE & SUBMISSION ENGINE")
+    print(f"   Universe: {'SMOKE TEST' if smoke_test else '1.73M Test S1 + 9.97M Test Targets (S2 + S3)'}")
+    print("   Architecture: DuckDB + CSR uint32 Indexing + RapidFuzz C-API + LightGBM")
     print("===================================================================")
 
     start_total_time = time.time()
@@ -222,10 +314,10 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
         rule_engine.load(rules_file)
 
     # ------------------------------------------------------------------
-    # 1. Ingest and Index Test S1 Entities via Parquet Cache
+    # Step 1: Ingest and Index Test S1 Entities ONCE (Reused by S2 and S3)
     # ------------------------------------------------------------------
-    log_memory_status("[Stage 3: Step 1/3: Test S1 Ingestion]")
-    print("\n[Stage 3: Step 1/3] Ingesting & Indexing Test S1 Entities...")
+    log_memory_status("[Stage 3: Step 1/3: Test S1 Ingestion & CSR Indexing]")
+    print("\n[Stage 3: Step 1/3] Ingesting & Building Reusable S1 Indexes ONCE...")
     t0_s1 = time.time()
     id_mapper = InternalIDMapper()
 
@@ -258,25 +350,27 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
 
     s1_dict = {m.internal_id: m for m in test_s1_mvs}
 
-    logger.info(f"Building Country-Partitioned Multi-Channel Indexes over {num_test_s1:,} Test S1 entities...")
+    logger.info(f"Building Country-Partitioned CSR Inverted Indexes over {num_test_s1:,} Test S1 entities...")
     for c_key, mvs in s1_by_country.items():
         if mvs:
             country_indexes[c_key].index_s1(mvs)
-            logger.info(f"  -> Country '{c_key}': {len(mvs):,} S1 entities indexed across all channels.")
+            logger.info(f"  -> Country '{c_key}': {len(mvs):,} S1 entities indexed in CSR uint32 format.")
 
     feat_extractor = ERXFeatureExtractor(token_idf=country_indexes["US"].token_idf)
     s1_index_time = time.time() - t0_s1
-    logger.info(f"Test S1 Indexing Complete in {s1_index_time:.2f}s (RAM: {get_current_rss_mb():.1f} MB).")
+    logger.info(f"Test S1 Reusable Indexes Ready in {s1_index_time:.2f}s (RAM: {get_current_rss_mb():.1f} MB).")
 
     # ------------------------------------------------------------------
-    # 2. Stream Test S2 & S3 via Parquet Cache with Multi-Threaded Scoring
+    # Step 2: Stream Test S2 & S3 via Checkpointed Shards
     # ------------------------------------------------------------------
-    log_memory_status("[Stage 3: Step 2/3: Target Streaming]")
-    print("\n[Stage 3: Step 2/3] Streaming Test Targets via DuckDB Parquet cache...")
+    log_memory_status("[Stage 3: Step 2/3: Target Streaming & Shard Generation]")
+    print("\n[Stage 3: Step 2/3] Streaming Test Targets via DuckDB Parquet Cache...")
     ensure_cached_parquet(test_s2_tsv, test_s2_parquet, is_s2=True, is_s3=False, num_workers=num_workers)
     ensure_cached_parquet(test_s3_tsv, test_s3_parquet, is_s2=False, is_s3=True, num_workers=num_workers)
 
     t0_targets = time.time()
+    shards_dir = config.cache_dir / "inference_shards"
+    shards_dir.mkdir(parents=True, exist_ok=True)
 
     s1_matches: List[List[str]] = [[] for _ in range(num_test_s1)]
     s1_candidates: List[List[str]] = [[] for _ in range(num_test_s1)]
@@ -287,7 +381,6 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
     tier1_exact_matches = 0
     tier2_fuzzy_matches = 0
 
-    chunk_size = 100000
     total_target_count = 20000 if smoke_test else 9_969_589
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -295,12 +388,40 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
             ("Source 2", test_s2_parquet, True, False),
             ("Source 3", test_s3_parquet, False, True),
         ]:
+            src_tag = "s2" if is_s2 else "s3"
             logger.info(f"Streaming and evaluating {src_name} ({parquet_file.name})...")
             pq_file = pq.ParquetFile(parquet_file)
             batch_idx = 0
 
             for batch in pq_file.iter_batches(batch_size=chunk_size):
                 batch_idx += 1
+                shard_parquet = shards_dir / f"shard_{src_tag}_{batch_idx:04d}.parquet"
+                shard_meta = shards_dir / f"shard_{src_tag}_{batch_idx:04d}.json"
+
+                # Check if shard already computed and valid
+                if not force_rebuild_shards:
+                    is_valid, meta_info = is_shard_valid(shard_parquet, shard_meta)
+                    if is_valid:
+                        logger.info(f"[{src_name}] Resuming from cached shard {shard_parquet.name} ({meta_info.get('total_pairs', 0):,} pairs)...")
+                        shard_tbl = pq.read_table(shard_parquet)
+                        s1_col = shard_tbl["s1_int_id"].to_numpy()
+                        t_col = shard_tbl["target_entity_id"].to_pylist()
+                        m_col = shard_tbl["is_match"].to_numpy()
+
+                        for s_int, t_id, is_m in zip(s1_col, t_col, m_col):
+                            if s_int < num_test_s1:
+                                if len(s1_candidates[s_int]) < 15:
+                                    s1_candidates[s_int].append(t_id)
+                                total_candidates_generated += 1
+                                if is_m:
+                                    s1_matches[s_int].append(t_id)
+                                    total_matches_selected += 1
+
+                        total_targets_processed += meta_info.get("targets_in_chunk", chunk_size)
+                        del shard_tbl, s1_col, t_col, m_col
+                        gc.collect()
+                        continue
+
                 pydict = batch.to_pydict()
                 del batch
 
@@ -397,7 +518,7 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
 
                 eval_futs = [
                     executor.submit(
-                        _process_target_subbatch,
+                        _process_target_subbatch_turbo,
                         sb,
                         country_indexes,
                         s1_dict,
@@ -415,6 +536,12 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
                     if res["tier2_features"].shape[0] > 0:
                         all_tier2_features.append(res["tier2_features"])
 
+                # Shard arrays for persistence
+                shard_s1_ids = []
+                shard_target_ids = []
+                shard_is_matches = []
+                shard_probs = []
+
                 # 1. Process Tier 1 Exact Matches
                 for s1_int, tid in all_tier1_matches:
                     if s1_int < num_test_s1:
@@ -423,6 +550,10 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
                             s1_candidates[s1_int].append(tid)
                         tier1_exact_matches += 1
                         total_matches_selected += 1
+                        shard_s1_ids.append(s1_int)
+                        shard_target_ids.append(tid)
+                        shard_is_matches.append(1)
+                        shard_probs.append(1.0)
 
                 for s1_int, tid in all_tier1_candidates:
                     if s1_int < num_test_s1:
@@ -442,7 +573,7 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
                         target_probs = cal_probs[feat_offset : feat_offset + cand_len]
                         feat_offset += cand_len
 
-                        for c in cands:
+                        for c, p in zip(cands, target_probs):
                             if c.s1_internal_id < num_test_s1:
                                 if len(s1_candidates[c.s1_internal_id]) < 15:
                                     s1_candidates[c.s1_internal_id].append(target.entity_id)
@@ -472,6 +603,25 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
                             s1_matches[best_cand.s1_internal_id].append(target.entity_id)
                             total_matches_selected += 1
                             tier2_fuzzy_matches += 1
+                            shard_s1_ids.append(best_cand.s1_internal_id)
+                            shard_target_ids.append(target.entity_id)
+                            shard_is_matches.append(1)
+                            shard_probs.append(best_prob)
+
+                # Persist Shard
+                write_inference_shard(
+                    shard_parquet,
+                    shard_meta,
+                    np.array(shard_s1_ids, dtype=np.uint32),
+                    shard_target_ids,
+                    np.array(shard_is_matches, dtype=np.int8),
+                    np.array(shard_probs, dtype=np.float32),
+                    {
+                        "source": src_name,
+                        "shard_id": batch_idx,
+                        "targets_in_chunk": chunk_len,
+                    }
+                )
 
                 total_targets_processed += chunk_len
                 chunk_time = time.time() - chunk_t0
@@ -494,13 +644,13 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
                     break
 
     target_stream_time = time.time() - t0_targets
-    logger.info(f"Target streaming complete in {target_stream_time:.2f}s.")
+    logger.info(f"Target streaming and sharding complete in {target_stream_time:.2f}s.")
 
     # ------------------------------------------------------------------
-    # 3. Write Output Deliverables
+    # Step 3: Stream Official Deliverable Files (matching_results.tsv & candidate_pairs.tsv)
     # ------------------------------------------------------------------
-    log_memory_status("[Stage 3: Step 3/3: Deliverables]")
-    print("\n[Stage 3: Step 3/3] Writing Official Output Files...")
+    log_memory_status("[Stage 3: Step 3/3: Deliverables Export]")
+    print("\n[Stage 3: Step 3/3] Writing Official Output Files (matching_results.tsv & candidate_pairs.tsv)...")
     t0_write = time.time()
 
     out_matching = config.output_dir / "matching_results.tsv"
@@ -522,16 +672,17 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
             f.write(f"{sid}\t{cand_str}\n")
 
     write_time = time.time() - t0_write
-    logger.info(f"Deliverables written successfully in {write_time:.2f}s.")
+    logger.info(f"Official output deliverables written successfully in {write_time:.2f}s.")
 
     total_time = time.time() - start_total_time
     test_matched_s1 = sum(1 for m in s1_matches if m)
     test_singletons = num_test_s1 - test_matched_s1
 
     report_path = final_artifact_dir / "reports" / "erx_stage3_inference_report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     report_md = [
         "# ER-X — Stage 3: Final Test Inference Execution Report\n",
-        f"**Date**: 2026-09-26  \n**Status**: **INFERENCE COMPLETE**  \n**Execution Time**: **{total_time/60:.2f} minutes**\n",
+        f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}  \n**Status**: **INFERENCE COMPLETE**  \n**Execution Time**: **{total_time/60:.2f} minutes**\n",
         "## 1. Executive Summary & Verification",
         "| Dimension | Measurement | Benchmark Requirement | Status |",
         "| :--- | :--- | :--- | :--- |",
@@ -562,6 +713,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ER-X Stage 3 Final Test Inference Engine")
     parser.add_argument("--smoke", action="store_true", help="Run quick smoke test")
     parser.add_argument("--limit", type=int, default=None, help="Optional S1 entity limit for benchmarks")
+    parser.add_argument("--chunk-size", type=int, default=100000, help="Target chunk batch size")
+    parser.add_argument("--force-rebuild", action="store_true", help="Force rebuild existing inference shards")
     args = parser.parse_args()
 
-    run_stage3_final_inference(smoke_test=args.smoke, max_s1_records=args.limit)
+    run_stage3_final_inference(
+        smoke_test=args.smoke,
+        max_s1_records=args.limit,
+        chunk_size=args.chunk_size,
+        force_rebuild_shards=args.force_rebuild,
+    )

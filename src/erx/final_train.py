@@ -690,19 +690,22 @@ def run_stage2_final_training(
     log_memory_status("[Step 6/6: Model Training]")
     print("\n[Step 6/6] Consolidating Shards & Training Production LightGBM Engine...")
 
-    # Lazy DuckDB loader for consolidated training data
-    logger.info("Loading training dataset from Parquet shards via DuckDB...")
-    con_train = get_safe_duckdb_connection(num_threads=num_workers, max_memory_gb="6GB")
-    
-    # Extract feature matrix and labels in streaming batches
-    feature_cols = ", ".join(FEATURE_NAMES)
-    train_query = f"""
-        SELECT {feature_cols}, label
-        FROM read_parquet('{stage_a_shards_dir}/*.parquet')
-    """
-    
-    arrow_table = con_train.execute(train_query).arrow()
-    con_train.close()
+    # Lazy DuckDB loader / PyArrow loader for consolidated training data
+    logger.info("Loading training dataset from Parquet shards...")
+    stage_a_files = sorted(stage_a_shards_dir.glob("*.parquet"))
+    if stage_a_files:
+        arrow_table = pq.read_table(stage_a_files, columns=FEATURE_NAMES + ["label"])
+    else:
+        stage_a_shards_str = str(stage_a_shards_dir).replace("\\", "/")
+        con_train = get_safe_duckdb_connection(num_threads=num_workers, max_memory_gb="6GB")
+        feature_cols = ", ".join(FEATURE_NAMES)
+        train_query = f"""
+            SELECT {feature_cols}, label
+            FROM read_parquet('{stage_a_shards_str}/*.parquet')
+        """
+        arrow_res = con_train.execute(train_query).arrow()
+        arrow_table = arrow_res.read_all() if hasattr(arrow_res, "read_all") else arrow_res
+        con_train.close()
 
     total_rows = arrow_table.num_rows
     logger.info(f"Loaded {total_rows:,} verified training pairs into Arrow Table (RAM: {get_current_rss_mb():.1f} MB).")
