@@ -9,12 +9,12 @@ Features:
 """
 
 import math
-from typing import Dict, List, Set, Tuple, Optional, Any
+from typing import Dict, List, Set, Tuple, Optional, Any, Union
 import numpy as np
 from rapidfuzz.distance import Levenshtein, JaroWinkler
 from rapidfuzz import fuzz
 
-from src.erx.types import MultiViewRecord, CandidatePair, ProvenanceMask
+from src.erx.types import MultiViewRecord, CompactS1Record, CandidatePair, ProvenanceMask
 
 
 FEATURE_NAMES = [
@@ -119,7 +119,7 @@ class ERXFeatureExtractor:
 
     def compute_pair_features(
         self,
-        s1: MultiViewRecord,
+        s1: Union[MultiViewRecord, CompactS1Record],
         target: MultiViewRecord,
         cand: CandidatePair,
         context_stats: Dict[str, float]
@@ -369,7 +369,7 @@ class ERXFeatureExtractor:
         self,
         target: MultiViewRecord,
         candidates: List[CandidatePair],
-        s1_records: Dict[int, MultiViewRecord]
+        s1_records: Dict[int, Union[MultiViewRecord, CompactS1Record]]
     ) -> np.ndarray:
         """Extracts feature matrix (len(candidates), num_features) for all candidate S1s of a target."""
         if not candidates:

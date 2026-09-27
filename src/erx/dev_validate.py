@@ -32,7 +32,7 @@ import logging
 from pathlib import Path
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Set, Tuple, Optional, Any
+from typing import Dict, List, Set, Tuple, Optional, Any, Union
 
 import duckdb
 import pyarrow.parquet as pq
@@ -41,12 +41,13 @@ from rapidfuzz import fuzz
 
 from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
-from src.erx.types import InternalIDMapper, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
+from src.erx.types import InternalIDMapper, MultiViewRecord, CompactS1Record, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.normalization import ERXNormalizer, compact_name, normalize_text, offline_transliterate
 from src.erx.cache_manager import (
     get_safe_duckdb_connection,
     ensure_cached_parquet,
     ensure_ground_truth_pairs_parquet,
+    load_compact_s1_records_from_parquet,
     load_multiview_records_from_parquet,
 )
 from src.erx.learned_rules import LearnedRuleEngine
@@ -65,7 +66,7 @@ logger = logging.getLogger("erx.dev_validate")
 def _process_blind_train_subbatch(
     target_items: List[Tuple[MultiViewRecord, int]],  # (target, true_s1_int)
     engine: ERXRetrievalEngine,
-    s1_dict: Dict[int, MultiViewRecord],
+    s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
     extractor: ERXFeatureExtractor,
 ) -> Dict[str, Any]:
     """Extracts blind candidate pairs and 73 features for 80% train fold training."""
@@ -111,7 +112,7 @@ def _process_blind_train_subbatch(
 def _process_val_target_subbatch(
     targets: List[MultiViewRecord],
     val_country_indexes: Dict[str, ERXRetrievalEngine],
-    val_s1_dict: Dict[int, MultiViewRecord],
+    val_s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
     feat_extractor: ERXFeatureExtractor,
     num_val_s1: int,
 ) -> Dict[str, Any]:
@@ -201,8 +202,8 @@ def _process_val_target_subbatch(
 
 def train_dev_model_if_needed(
     config: ERXConfig,
-    train_s1_mvs: List[MultiViewRecord],
-    train_s1_dict: Dict[int, MultiViewRecord],
+    train_s1_mvs: Union[List[MultiViewRecord], List[CompactS1Record]],
+    train_s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
     s1_id_to_int: Dict[str, int],
     dev_artifact_dir: Path,
     id_mapper: InternalIDMapper,
@@ -442,11 +443,11 @@ def run_stage1_end_to_end_validation(smoke_test: bool = False, max_s1_records: O
     # 1. Parquet Caching & Ingestion of S1 Records
     # ------------------------------------------------------------------
     log_memory_status("[Step 1/6: S1 Ingestion]")
-    logger.info("[Step 1/6] Ingesting Training S1 records via DuckDB Parquet cache...")
+    logger.info("[Step 1/6] Ingesting Training S1 records via DuckDB Parquet cache (Compact Mode)...")
     ensure_cached_parquet(s1_tsv, s1_parquet, is_s2=False, is_s3=False, num_workers=num_workers)
     
     load_limit = 10000 if smoke_test else max_s1_records
-    s1_records = load_multiview_records_from_parquet(s1_parquet, id_mapper, max_records=load_limit)
+    s1_records = load_compact_s1_records_from_parquet(s1_parquet, id_mapper, max_records=load_limit)
     s1_set = {rec.entity_id for rec in s1_records}
     num_total_s1 = len(s1_records)
 
@@ -483,8 +484,8 @@ def run_stage1_end_to_end_validation(smoke_test: bool = False, max_s1_records: O
     val_s1_ids = {sid for sid in s1_set if hash(sid) % 5 == 0}
     assert len(train_s1_ids & val_s1_ids) == 0, "FATAL: S1 ID overlap detected!"
 
-    train_s1_mvs: List[MultiViewRecord] = []
-    val_s1_mvs: List[MultiViewRecord] = []
+    train_s1_mvs: List[CompactS1Record] = []
+    val_s1_mvs: List[CompactS1Record] = []
     for rec in s1_records:
         if rec.entity_id in train_s1_ids:
             train_s1_mvs.append(rec)
@@ -494,7 +495,7 @@ def run_stage1_end_to_end_validation(smoke_test: bool = False, max_s1_records: O
     num_val_s1 = len(val_s1_mvs)
     val_s1_ordered_ids = [m.entity_id for m in val_s1_mvs]
     val_s1_id_to_int = {m.entity_id: idx for idx, m in enumerate(val_s1_mvs)}
-    val_s1_dict = {idx: m for idx, m in enumerate(val_s1_mvs)}
+    val_s1_dict: Dict[int, CompactS1Record] = {idx: m for idx, m in enumerate(val_s1_mvs)}
 
     for idx, m in enumerate(val_s1_mvs):
         m.internal_id = idx
@@ -523,7 +524,7 @@ def run_stage1_end_to_end_validation(smoke_test: bool = False, max_s1_records: O
         "France": ERXRetrievalEngine(config),
         "OTHER": ERXRetrievalEngine(config),
     }
-    val_s1_by_country: Dict[str, List[MultiViewRecord]] = defaultdict(list)
+    val_s1_by_country: Dict[str, List[CompactS1Record]] = defaultdict(list)
     for mv in val_s1_mvs:
         c_key = mv.country if mv.country in val_country_indexes else "OTHER"
         val_s1_by_country[c_key].append(mv)

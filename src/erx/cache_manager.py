@@ -34,7 +34,7 @@ import pyarrow.parquet as pq
 
 from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
-from src.erx.types import InternalIDMapper, MultiViewRecord, char_ngrams_set
+from src.erx.types import InternalIDMapper, MultiViewRecord, CompactS1Record, char_ngrams_set
 from src.erx.normalization import ERXNormalizer
 
 logger = logging.getLogger("erx.cache_manager")
@@ -199,6 +199,83 @@ def ensure_ground_truth_pairs_parquet(
     con.close()
     logger.info(f"Ground Truth pairs cached in {time.time() - t0:.2f}s -> {parquet_path.name}.")
     return parquet_path
+
+
+def load_compact_s1_records_from_parquet(
+    parquet_path: Path,
+    id_mapper: InternalIDMapper,
+    max_records: Optional[int] = None,
+) -> List[CompactS1Record]:
+    """
+    Ultra-low memory ingestion of S1 records (< 500 MB for 2.2M entities).
+    Eliminates all persistent Python set/list overhead.
+    """
+    t0 = time.time()
+    table = pq.read_table(parquet_path)
+    if max_records:
+        table = table.slice(0, max_records)
+
+    pydict = table.to_pydict()
+    del table
+    gc.collect()
+
+    total = len(pydict["entity_id"])
+    records: List[CompactS1Record] = []
+    records_append = records.append
+
+    eids = pydict["entity_id"]
+    countries = pydict["country"]
+    raw_names = pydict["raw_name"]
+    norm_names = pydict["norm_name"]
+    compact_names = pydict["compact_name"]
+    translit_names = pydict["translit_name"]
+    translit_comp_names = pydict["translit_comp_name"]
+    learned_names = pydict["learned_name"]
+    sorted_token_names = pydict["sorted_token_name"]
+    name_phonetic_sigs = pydict["name_phonetic_sig"]
+    raw_addrs = pydict["raw_addr"]
+    norm_addrs = pydict["norm_addr"]
+    translit_addrs = pydict["translit_addr"]
+    numeric_signatures = pydict["numeric_signature"]
+    house_numbers_strs = pydict["house_numbers_str"]
+    postal_codes_strs = pydict["postal_codes_str"]
+    name_tokens_strs = pydict["name_tokens_str"]
+    translit_tokens_strs = pydict["translit_tokens_str"]
+    addr_tokens_strs = pydict["addr_tokens_str"]
+
+    for i in range(total):
+        eid = eids[i]
+        int_id = id_mapper.get_or_add(eid)
+        rec = CompactS1Record(
+            internal_id=int_id,
+            entity_id=eid,
+            country=countries[i],
+            raw_name=raw_names[i],
+            norm_name=norm_names[i],
+            compact_name=compact_names[i],
+            translit_name=translit_names[i],
+            translit_comp_name=translit_comp_names[i],
+            learned_name=learned_names[i],
+            sorted_token_name=sorted_token_names[i],
+            name_phonetic_sig=name_phonetic_sigs[i],
+            raw_addr=raw_addrs[i],
+            norm_addr=norm_addrs[i],
+            translit_addr=translit_addrs[i],
+            numeric_signature=numeric_signatures[i],
+            house_numbers_str=house_numbers_strs[i],
+            postal_codes_str=postal_codes_strs[i],
+            name_tokens_str=name_tokens_strs[i],
+            translit_tokens_str=translit_tokens_strs[i],
+            addr_tokens_str=addr_tokens_strs[i],
+            is_s2=False,
+            is_s3=False,
+        )
+        records_append(rec)
+
+    del pydict
+    gc.collect()
+    logger.info(f"Loaded {len(records):,} CompactS1Records from {parquet_path.name} in {time.time() - t0:.2f}s (RAM: {get_current_rss_mb():.1f} MB).")
+    return records
 
 
 def load_multiview_records_from_parquet(

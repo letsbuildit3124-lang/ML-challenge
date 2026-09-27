@@ -39,11 +39,12 @@ from rapidfuzz import fuzz
 
 from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
-from src.erx.types import InternalIDMapper, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
+from src.erx.types import InternalIDMapper, MultiViewRecord, CompactS1Record, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.normalization import ERXNormalizer, compact_name, normalize_text, offline_transliterate
 from src.erx.cache_manager import (
     get_safe_duckdb_connection,
     ensure_cached_parquet,
+    load_compact_s1_records_from_parquet,
     load_multiview_records_from_parquet,
 )
 from src.erx.learned_rules import LearnedRuleEngine
@@ -62,7 +63,7 @@ logger = logging.getLogger("erx.final_inference")
 def _process_target_subbatch(
     targets: List[MultiViewRecord],
     country_indexes: Dict[str, ERXRetrievalEngine],
-    s1_dict: Dict[int, MultiViewRecord],
+    s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
     feat_extractor: ERXFeatureExtractor,
     num_s1: int,
 ) -> Dict[str, Any]:
@@ -190,7 +191,7 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
     ensure_cached_parquet(test_s1_tsv, test_s1_parquet, is_s2=False, is_s3=False, num_workers=num_workers)
     
     load_limit = 10000 if smoke_test else max_s1_records
-    test_s1_mvs = load_multiview_records_from_parquet(test_s1_parquet, id_mapper, max_records=load_limit)
+    test_s1_mvs = load_compact_s1_records_from_parquet(test_s1_parquet, id_mapper, max_records=load_limit)
     num_test_s1 = len(test_s1_mvs)
     test_s1_ordered_ids = [m.entity_id for m in test_s1_mvs]
 
@@ -200,7 +201,7 @@ def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optiona
         "France": ERXRetrievalEngine(config),
         "OTHER": ERXRetrievalEngine(config),
     }
-    s1_by_country: Dict[str, List[MultiViewRecord]] = defaultdict(list)
+    s1_by_country: Dict[str, List[CompactS1Record]] = defaultdict(list)
 
     for mv in test_s1_mvs:
         c_key = mv.country if mv.country in country_indexes else "OTHER"

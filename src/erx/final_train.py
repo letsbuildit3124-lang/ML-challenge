@@ -45,12 +45,13 @@ import numpy as np
 
 from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
-from src.erx.types import InternalIDMapper, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
+from src.erx.types import InternalIDMapper, MultiViewRecord, CompactS1Record, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.normalization import ERXNormalizer, compact_name, normalize_text, offline_transliterate
 from src.erx.cache_manager import (
     get_safe_duckdb_connection,
     ensure_cached_parquet,
     ensure_ground_truth_pairs_parquet,
+    load_compact_s1_records_from_parquet,
     load_multiview_records_from_parquet,
 )
 from src.erx.learned_rules import LearnedRuleEngine
@@ -64,6 +65,105 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger("erx.final_train")
+
+
+def save_feature_checkpoint(
+    checkpoint_npz: Path,
+    checkpoint_meta: Path,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    s1_count: int,
+    target_count: int,
+    mode: str,
+):
+    """Saves training features array alongside strict validation metadata."""
+    np.savez_compressed(checkpoint_npz, X_train=X_train, y_train=y_train)
+    meta = {
+        "s1_count": int(s1_count),
+        "target_count": int(target_count),
+        "total_pairs": int(len(X_train)),
+        "positives_count": int(np.sum(y_train)),
+        "feature_count": int(X_train.shape[1]),
+        "mode": mode,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    with open(checkpoint_meta, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    logger.info(f"Saved verified feature checkpoint: {checkpoint_npz.name} ({meta['total_pairs']:,} pairs, {meta['positives_count']:,} positives, metadata: {checkpoint_meta.name}).")
+
+
+def load_verified_feature_checkpoint(
+    checkpoint_npz: Path,
+    checkpoint_meta: Path,
+    expected_s1_count: int,
+    mode: str,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """
+    Forensically validates feature checkpoint on disk.
+    Strictly prevents using smoke test / partial checkpoints for full production runs.
+    """
+    if not checkpoint_npz.exists() or not checkpoint_meta.exists():
+        if checkpoint_npz.exists() and not checkpoint_meta.exists():
+            logger.warning(f"[CHECKPOINT INVALID] Found {checkpoint_npz.name} without metadata file {checkpoint_meta.name}. Discarding unverified checkpoint.")
+            try:
+                checkpoint_npz.unlink()
+            except Exception:
+                pass
+        return None
+
+    try:
+        with open(checkpoint_meta, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as e:
+        logger.warning(f"[CHECKPOINT INVALID] Failed to read {checkpoint_meta.name}: {e}. Discarding.")
+        return None
+
+    ckpt_mode = meta.get("mode", "unknown")
+    ckpt_s1 = meta.get("s1_count", 0)
+    ckpt_pairs = meta.get("total_pairs", 0)
+    ckpt_pos = meta.get("positives_count", 0)
+    ckpt_feats = meta.get("feature_count", 0)
+
+    if ckpt_feats != len(FEATURE_NAMES):
+        logger.warning(f"[CHECKPOINT INVALID] Feature count mismatch: {ckpt_feats} != {len(FEATURE_NAMES)}. Discarding.")
+        return None
+
+    if mode == "full":
+        # Full production run requirements:
+        if ckpt_mode != "full" or ckpt_s1 < 2_000_000 or ckpt_pairs < 200_000 or ckpt_pos < 10_000:
+            logger.warning(
+                f"[CHECKPOINT REJECTED] Found checkpoint with mode='{ckpt_mode}', S1 count={ckpt_s1:,}, "
+                f"pairs={ckpt_pairs:,}, positives={ckpt_pos:,}. "
+                f"Full production training requires mode='full', S1 >= 2,000,000, pairs >= 200,000. "
+                f"Discarding stale/smoke checkpoint and recomputing 100% full-universe features."
+            )
+            try:
+                checkpoint_npz.unlink()
+                checkpoint_meta.unlink()
+            except Exception:
+                pass
+            return None
+    elif mode == "smoke":
+        if ckpt_mode != "smoke":
+            logger.info(f"Smoke run requested but checkpoint mode is '{ckpt_mode}'. Recomputing smoke features.")
+            return None
+    elif mode == "benchmark":
+        if ckpt_s1 != expected_s1_count:
+            logger.info(f"Benchmark requested for {expected_s1_count:,} S1 entities, but checkpoint has {ckpt_s1:,}. Recomputing.")
+            return None
+
+    try:
+        data = np.load(checkpoint_npz)
+        X_train = data["X_train"]
+        y_train = data["y_train"]
+        if len(X_train) != ckpt_pairs or int(np.sum(y_train)) != ckpt_pos:
+            logger.warning("[CHECKPOINT CORRUPT] Array dimensions do not match metadata. Discarding.")
+            return None
+        logger.info(f"Loaded verified feature checkpoint: {len(X_train):,} pairs ({int(np.sum(y_train)):,} positives, {X_train.shape[1]} features, mode={ckpt_mode}).")
+        return X_train, y_train
+    except Exception as e:
+        logger.warning(f"[CHECKPOINT ERROR] Failed to load {checkpoint_npz.name}: {e}. Discarding.")
+        return None
 
 
 def _process_blind_train_subbatch(
@@ -117,26 +217,41 @@ def run_stage2_final_training(smoke_test: bool = False, max_s1_records: Optional
     Executes STAGE 2: 100% Full-Universe Model Training & Artifact Generation.
     Memory-safe, CPU-efficient, fully resumable with step-level checkpoints.
     """
+    if smoke_test:
+        run_mode = "smoke"
+        target_limit = 25000
+        load_limit = 10000
+    elif max_s1_records is not None:
+        run_mode = "benchmark"
+        target_limit = 50000
+        load_limit = max_s1_records
+    else:
+        run_mode = "full"
+        target_limit = 250000
+        load_limit = None
+
     print("===================================================================")
     print("        ER-X STAGE 2: FINAL FULL-UNIVERSE TRAINING PIPELINE         ")
-    print(f"   Universe: {'SMOKE TEST (10,000)' if smoke_test else '100% (2,206,821 S1 Entities)'} | Zero Leakage Fit ")
-    print("   Memory-Safe DuckDB + Parquet Caching Architecture Enabled       ")
+    print(f"   Universe: {'SMOKE TEST (10,000)' if smoke_test else ('BENCHMARK (' + str(max_s1_records) + ')') if max_s1_records else '100% (2,206,821 S1 Entities)'} | Zero Leakage Fit ")
+    print(f"   Mode: {run_mode.upper()} | High-Throughput DuckDB & Parquet Caching Architecture")
     print("===================================================================")
 
     t0_all = time.time()
     config = ERXConfig()
     num_workers = min(8, os.cpu_count() or 8)
 
-    final_artifact_dir = config.artifacts_dir / "final"
-    final_artifact_dir.mkdir(parents=True, exist_ok=True)
-    models_dir = final_artifact_dir / "models"
+    # Namespaced artifact directories: smoke and benchmark never pollute final/
+    artifact_dir = config.artifacts_dir / ("smoke" if smoke_test else "benchmark" if max_s1_records else "final")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    models_dir = artifact_dir / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
-    checkpoints_dir = final_artifact_dir / "checkpoints"
+    checkpoints_dir = artifact_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     config.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    rules_file = final_artifact_dir / "learned_rules.json"
+    rules_file = artifact_dir / "learned_rules.json"
     train_features_checkpoint = checkpoints_dir / "train_features.npz"
+    train_features_meta = checkpoints_dir / "train_features.meta.json"
     model_path = models_dir / "lightgbm_final_model.txt"
     calibrator_path = models_dir / "isotonic_calibrator.pkl"
 
@@ -156,17 +271,16 @@ def run_stage2_final_training(smoke_test: bool = False, max_s1_records: Optional
     # Step 1: Ingest 100% S1 Records via Parquet Cache
     # ------------------------------------------------------------------
     log_memory_status("[Step 1/5: S1 Ingestion]")
-    logger.info("[Step 1/5] Ingesting Training S1 records from DuckDB Parquet cache...")
+    logger.info("[Step 1/5] Ingesting Training S1 records from DuckDB Parquet cache (Compact Mode)...")
     ensure_cached_parquet(s1_tsv, s1_parquet, is_s2=False, is_s3=False, num_workers=num_workers)
     
-    load_limit = 10000 if smoke_test else max_s1_records
-    s1_records = load_multiview_records_from_parquet(s1_parquet, id_mapper, max_records=load_limit)
+    s1_records = load_compact_s1_records_from_parquet(s1_parquet, id_mapper, max_records=load_limit)
     num_s1 = len(s1_records)
     
-    # Direct dictionary: internal_id -> record (Zero memory waste)
+    # Direct dictionary: internal_id -> record (Ultra-low memory layout: < 500 MB)
     s1_dict = {rec.internal_id: rec for rec in s1_records}
     s1_id_to_int = {rec.entity_id: rec.internal_id for rec in s1_records}
-    logger.info(f"Loaded {num_s1:,} S1 records into memory (RAM: {get_current_rss_mb():.1f} MB).")
+    logger.info(f"Loaded {num_s1:,} Compact S1 records into memory (RAM: {get_current_rss_mb():.1f} MB).")
 
     # ------------------------------------------------------------------
     # Step 2: Build 100% S1 6-Channel Index (Zero TF-IDF Bottleneck)
@@ -209,21 +323,23 @@ def run_stage2_final_training(smoke_test: bool = False, max_s1_records: Optional
             con_rules.close()
 
     # ------------------------------------------------------------------
-    # Step 4: Extract Balanced Training Target Pairs & Features (Checkpointed)
+    # Step 4: Extract Balanced Training Target Pairs & Features (Strict Validation)
     # ------------------------------------------------------------------
     log_memory_status("[Step 4/5: Feature Extraction]")
-    if train_features_checkpoint.exists():
-        logger.info(f"Loading checkpointed training features from {train_features_checkpoint}...")
-        data = np.load(train_features_checkpoint)
-        X_train = data["X_train"]
-        y_train = data["y_train"]
-        logger.info(f"Loaded {len(X_train):,} training pairs ({int(np.sum(y_train)):,} positives) from checkpoint.")
+    loaded_checkpoint = load_verified_feature_checkpoint(
+        train_features_checkpoint,
+        train_features_meta,
+        expected_s1_count=num_s1,
+        mode=run_mode,
+    )
+
+    if loaded_checkpoint is not None:
+        X_train, y_train = loaded_checkpoint
     else:
-        logger.info("[Step 4/5] Extracting Balanced Target Pairs via DuckDB Parquet Join...")
+        logger.info(f"[Step 4/5] Extracting Balanced Target Pairs via DuckDB Parquet Join (Target Limit: {target_limit:,})...")
         t0_feat = time.time()
         con = get_safe_duckdb_connection(num_threads=4, max_memory_gb="6GB")
         
-        target_limit = 25000 if smoke_test else 250000
         s2_rows = con.execute(f"""
             SELECT t.entity_id, t.country, t.raw_name, t.norm_name, t.compact_name, t.translit_name,
                    t.translit_comp_name, t.learned_name, t.sorted_token_name, t.name_phonetic_sig,
@@ -342,9 +458,16 @@ def run_stage2_final_training(smoke_test: bool = False, max_s1_records: Optional
 
         logger.info(f"Blind candidate extraction complete in {time.time() - t0_feat:.2f}s | Pairs: {len(X_train):,} (Positives: {int(np.sum(y_train)):,}).")
         
-        # Save feature checkpoint
-        logger.info(f"Saving training features checkpoint to {train_features_checkpoint}...")
-        np.savez_compressed(train_features_checkpoint, X_train=X_train, y_train=y_train)
+        # Save verified feature checkpoint
+        save_feature_checkpoint(
+            train_features_checkpoint,
+            train_features_meta,
+            X_train,
+            y_train,
+            s1_count=num_s1,
+            target_count=total_eval,
+            mode=run_mode,
+        )
 
     # ------------------------------------------------------------------
     # Step 5: Train Final Production LightGBM Model & Calibrator
@@ -360,17 +483,28 @@ def run_stage2_final_training(smoke_test: bool = False, max_s1_records: Optional
     config.lgb_params["n_jobs"] = num_workers
     trainer = ERXModelTrainer(config)
     trainer.train(X_tr, y_tr, X_va, y_va)
-    trainer.save(model_path)
-    logger.info(f"Saved Final Production Model to: {model_path}")
+
+    # Atomic Model Save with size verification
+    tmp_model_path = model_path.with_suffix(".tmp.txt")
+    trainer.save(tmp_model_path)
+    if not tmp_model_path.exists() or tmp_model_path.stat().st_size < 1000:
+        raise RuntimeError(f"FATAL: Model artifact save failed or empty at {tmp_model_path}.")
+    os.replace(tmp_model_path, model_path)
+    logger.info(f"Saved Verified Final Production Model to: {model_path} ({model_path.stat().st_size / 1024:.1f} KB)")
 
     logger.info("Fitting Final Isotonic Calibrator on internal validation split...")
     calibrator = ERXCalibrator(method="isotonic")
     raw_val_probs = trainer.model.predict(X_va, num_threads=num_workers)
     calibrator.fit(raw_val_probs, y_va)
 
-    with open(calibrator_path, "wb") as f:
+    # Atomic Calibrator Save
+    tmp_calibrator_path = calibrator_path.with_suffix(".tmp.pkl")
+    with open(tmp_calibrator_path, "wb") as f:
         pickle.dump(calibrator, f, protocol=pickle.HIGHEST_PROTOCOL)
-    logger.info(f"Saved Final Calibrator to: {calibrator_path}")
+    if not tmp_calibrator_path.exists() or tmp_calibrator_path.stat().st_size < 100:
+        raise RuntimeError(f"FATAL: Calibrator artifact save failed at {tmp_calibrator_path}.")
+    os.replace(tmp_calibrator_path, calibrator_path)
+    logger.info(f"Saved Verified Final Calibrator to: {calibrator_path}")
 
     del X_train, y_train, X_tr, y_tr, X_va, y_va
     gc.collect()
@@ -382,7 +516,7 @@ def run_stage2_final_training(smoke_test: bool = False, max_s1_records: Optional
     print(f"  Calibrator Artifact: {calibrator_path}")
     print(f"  Learned Rules:       {rules_file}")
     print(f"  Checkpoints:         {checkpoints_dir}")
-    print(f"  Final Memory RSS:    {get_current_rss_mb():.1f} MB (Peak < 4.5 GB)")
+    print(f"  Final Memory RSS:    {get_current_rss_mb():.1f} MB (Peak < 5.0 GB)")
     print("===================================================================")
 
 

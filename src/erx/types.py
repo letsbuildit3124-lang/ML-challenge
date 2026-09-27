@@ -55,6 +55,98 @@ def char_ngrams_set(text: str, n: int) -> Set[str]:
 
 
 @dataclass(slots=True)
+class CompactS1Record:
+    """
+    Lightweight, ultra-low memory S1 record representation for indexing & retrieval.
+    Stores only string primitives (zero persistent Python set/list overhead).
+    Provides dynamic on-the-fly properties for token and n-gram sets when needed during scoring.
+    Keeps 2.2M records < 500 MB RAM total.
+    """
+    internal_id: int
+    entity_id: str
+    country: str
+
+    raw_name: str
+    norm_name: str
+    compact_name: str
+    translit_name: str
+    translit_comp_name: str
+    learned_name: str
+    sorted_token_name: str
+    name_phonetic_sig: str
+
+    raw_addr: str
+    norm_addr: str
+    translit_addr: str
+    numeric_signature: str
+
+    house_numbers_str: str
+    postal_codes_str: str
+    name_tokens_str: str
+    translit_tokens_str: str
+    addr_tokens_str: str
+
+    is_s2: bool = False
+    is_s3: bool = False
+
+    @property
+    def is_name_missing(self) -> bool:
+        return not bool(self.norm_name)
+
+    @property
+    def is_addr_missing(self) -> bool:
+        return not bool(self.norm_addr)
+
+    @property
+    def is_country_missing(self) -> bool:
+        return not bool(self.country)
+
+    @property
+    def name_tokens(self) -> List[str]:
+        return self.name_tokens_str.split() if self.name_tokens_str else []
+
+    @property
+    def name_tok_set(self) -> Set[str]:
+        return set(self.name_tokens_str.split()) if self.name_tokens_str else set()
+
+    @property
+    def translit_tokens(self) -> List[str]:
+        return self.translit_tokens_str.split() if self.translit_tokens_str else []
+
+    @property
+    def translit_tok_set(self) -> Set[str]:
+        return set(self.translit_tokens_str.split()) if self.translit_tokens_str else set()
+
+    @property
+    def addr_tokens(self) -> List[str]:
+        return self.addr_tokens_str.split() if self.addr_tokens_str else []
+
+    @property
+    def addr_tok_set(self) -> Set[str]:
+        return set(self.addr_tokens_str.split()) if self.addr_tokens_str else set()
+
+    @property
+    def house_numbers(self) -> Set[str]:
+        return set(self.house_numbers_str.split()) if self.house_numbers_str else set()
+
+    @property
+    def postal_codes(self) -> Set[str]:
+        return set(self.postal_codes_str.split()) if self.postal_codes_str else set()
+
+    @property
+    def name_char3_set(self) -> Set[str]:
+        return char_ngrams_set(self.norm_name, 3)
+
+    @property
+    def name_char4_set(self) -> Set[str]:
+        return char_ngrams_set(self.norm_name, 4)
+
+    @property
+    def name_char5_set(self) -> Set[str]:
+        return char_ngrams_set(self.norm_name, 5)
+
+
+@dataclass(slots=True)
 class MultiViewRecord:
     """
     High-performance precomputed multi-view record representation.

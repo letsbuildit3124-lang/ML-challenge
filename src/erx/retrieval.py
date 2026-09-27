@@ -12,13 +12,13 @@ Implements 6 Complementary Retrieval Channels:
 import math
 import logging
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple, Optional, Any
+from typing import Dict, List, Set, Tuple, Optional, Any, Union
 import numpy as np
 from scipy import sparse
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from src.erx.config import ERXConfig
-from src.erx.types import MultiViewRecord, CandidatePair, ProvenanceMask
+from src.erx.types import MultiViewRecord, CompactS1Record, CandidatePair, ProvenanceMask
 
 logger = logging.getLogger("erx.retrieval")
 
@@ -28,7 +28,7 @@ class ERXRetrievalEngine:
 
     def __init__(self, config: ERXConfig):
         self.config = config
-        self.s1_records: Dict[int, MultiViewRecord] = {}
+        self.s1_records: Dict[int, Union[MultiViewRecord, CompactS1Record]] = {}
 
         # Channel A & F: Hash/Inverted exact and learned keys
         self.index_norm_name: Dict[str, List[int]] = defaultdict(list)
@@ -53,7 +53,7 @@ class ERXRetrievalEngine:
         # Channel E: Phonetic Signatures
         self.index_phonetic: Dict[str, List[int]] = defaultdict(list)
 
-    def index_s1(self, s1_records: List[MultiViewRecord]) -> None:
+    def index_s1(self, s1_records: Union[List[MultiViewRecord], List[CompactS1Record]]) -> None:
         """Builds all multi-channel indexes over S1 records."""
         logger.info(f"Indexing {len(s1_records):,} S1 entities across 6 channels...")
         num_s1 = len(s1_records)
