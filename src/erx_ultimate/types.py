@@ -1,6 +1,6 @@
 """
 ER-X Ultimate: Core Data Types, Record Schemas, and Memory Structures
-Includes pre-computed token/ngram caches for zero-redundancy feature extraction.
+Includes official submission formatting matching competition specifications.
 """
 
 from __future__ import annotations
@@ -72,9 +72,22 @@ class EntityCluster:
     source1_id: int
     source2_ids: List[int] = field(default_factory=list)
     source3_ids: List[int] = field(default_factory=list)
+    candidate_s2_ids: List[int] = field(default_factory=list)
+    candidate_s3_ids: List[int] = field(default_factory=list)
     
-    def to_tsv_row(self) -> str:
-        """Format as strict TSV row matching official submission specification."""
-        s2_str = ",".join(map(str, sorted(self.source2_ids))) if self.source2_ids else ""
-        s3_str = ",".join(map(str, sorted(self.source3_ids))) if self.source3_ids else ""
-        return f"{self.source1_id}\t{s2_str}\t{s3_str}\n"
+    def to_matching_results_row(self) -> str:
+        """Format as strict TSV row: source1_entity_id \t matched_entity_ids"""
+        s1_str = f"S1-{self.source1_id}"
+        s2_items = [f"S2-{x}" for x in sorted(self.source2_ids)]
+        s3_items = [f"S3-{x}" for x in sorted(self.source3_ids)]
+        matched_str = ",".join(s2_items + s3_items)
+        return f"{s1_str}\t{matched_str}\n"
+
+    def to_candidate_pairs_row(self) -> str:
+        """Format as strict TSV row: source1_entity_id \t candidate_entity_ids"""
+        s1_str = f"S1-{self.source1_id}"
+        s2_cands = [f"S2-{x}" for x in sorted(set(self.candidate_s2_ids))]
+        s3_cands = [f"S3-{x}" for x in sorted(set(self.candidate_s3_ids))]
+        all_cands = sorted(set(s2_cands + s3_cands))
+        cand_str = ",".join(all_cands)
+        return f"{s1_str}\t{cand_str}\n"

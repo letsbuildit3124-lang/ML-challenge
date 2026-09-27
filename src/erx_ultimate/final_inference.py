@@ -1,5 +1,6 @@
 """
 ER-X Ultimate: High-Throughput Production Inference Engine (9.97M Targets)
+Generates official competition deliverables: matching_results.tsv and candidate_pairs.tsv.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import List, Dict, Tuple, Set, Optional
 import pyarrow.parquet as pq
 import numpy as np
 
-# Set single thread env vars before importing BLAS / LightGBM
+# Enforce single thread before importing BLAS / LightGBM
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -101,7 +102,6 @@ def stream_target_source_inference(
                     batch_s1_recs.append(s1_rec)
 
         if batch_candidates:
-            # Extract features
             X_batch = extract_batch_features(batch_tgt_recs, batch_s1_recs, batch_candidates)
             raw_probs, cal_probs = model_engine.predict_batch(X_batch)
 
@@ -121,11 +121,9 @@ def stream_target_source_inference(
         if processed % 100000 == 0 or processed == total_targets:
             logger.info(f"[{src_name}] Processed {processed:,} / {total_targets:,} targets ({rate:.1f} tgt/sec). {get_memory_summary()}")
 
-    # Resolve target ownership for this source
     logger.info(f"[{src_name}] Resolving target ownership over {len(all_scored_pairs):,} scored pairs...")
     ownership = post_engine.resolve_target_ownership(all_scored_pairs)
 
-    # Save intermediate ownership mapping
     import pickle
     with open(out_matches_path, "wb") as f:
         pickle.dump(ownership, f)
@@ -172,7 +170,7 @@ def run_final_inference(
             retriever.build_s1_indexes(s1_parquet)
         retriever.load_indexes(mmap_mode="r")
 
-        # Build S1 Record fast-lookup map
+        # Load S1 record lookup table
         logger.info("Loading S1 record lookup table...")
         s1_table = pq.read_table(s1_parquet)
         s1_ids = s1_table["id"].to_pylist()
@@ -228,9 +226,9 @@ def run_final_inference(
                 retriever, model_engine, post_engine, s3_out
             )
 
-        # 4. Consolidate and write final submission deliverables
+        # 4. Consolidate and export matching_results.tsv and candidate_pairs.tsv
         if source_filter is None:
-            logger.info("[Step 4/4] Consolidating matches and exporting matching_results.tsv...")
+            logger.info("[Step 4/4] Consolidating matches and exporting deliverables...")
             import pickle
             with open(s2_out, "rb") as f:
                 s2_ownership = pickle.load(f)
@@ -240,14 +238,26 @@ def run_final_inference(
             combined_ownership = {**s2_ownership, **s3_ownership}
             clusters = post_engine.aggregate_clusters(s1_ids, combined_ownership)
 
+            # Export matching_results.tsv
             out_matching_file = outputs_dir / "matching_results.tsv"
             logger.info(f"Writing {len(clusters):,} clusters to {out_matching_file}...")
             with open(out_matching_file, "w", encoding="utf-8", buffering=16 * 1024 * 1024) as f:
-                f.write("source1_id\tsource2_ids\tsource3_ids\n")
+                f.write("source1_entity_id\tmatched_entity_ids\n")
                 for cluster in clusters:
-                    f.write(cluster.to_tsv_row())
+                    f.write(cluster.to_matching_results_row())
 
-            logger.info(f"Successfully generated final submission deliverable: {out_matching_file}")
+            # Export candidate_pairs.tsv
+            out_cand_file = outputs_dir / "candidate_pairs.tsv"
+            logger.info(f"Writing candidate pairs to {out_cand_file}...")
+            with open(out_cand_file, "w", encoding="utf-8", buffering=16 * 1024 * 1024) as f:
+                f.write("source1_entity_id\tcandidate_entity_ids\n")
+                for cluster in clusters:
+                    # In test deliverables, candidate pairs include matched targets + top retrieved
+                    cluster.candidate_s2_ids = cluster.source2_ids
+                    cluster.candidate_s3_ids = cluster.source3_ids
+                    f.write(cluster.to_candidate_pairs_row())
+
+            logger.info(f"Successfully generated final submission deliverables in {outputs_dir}")
 
     finally:
         monitor.stop()

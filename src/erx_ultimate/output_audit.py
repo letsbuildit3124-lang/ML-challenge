@@ -1,5 +1,6 @@
 """
 ER-X Ultimate: Automated 10-Point Deliverable Audit Engine
+Validates matching_results.tsv and candidate_pairs.tsv against official competition invariants.
 """
 
 from __future__ import annotations
@@ -45,57 +46,47 @@ def run_output_audit(
     file_hash = compute_sha256(p)
     logger.info(f"File size: {file_size_bytes / (1024**2):.2f} MB | SHA256: {file_hash}")
 
-    seen_s1: Set[int] = set()
-    seen_s2: Set[int] = set()
-    seen_s3: Set[int] = set()
+    seen_s1: Set[str] = set()
+    seen_targets: Set[str] = set()
     
-    s2_duplicates = 0
-    s3_duplicates = 0
+    duplicate_targets = 0
     total_rows = 0
     singleton_count = 0
-    total_s2_matches = 0
-    total_s3_matches = 0
+    total_matches = 0
 
     with open(p, "r", encoding="utf-8") as f:
         header = f.readline().strip()
-        if header != "source1_id\tsource2_ids\tsource3_ids":
+        if header not in ["source1_entity_id\tmatched_entity_ids", "source1_id\tsource2_ids\tsource3_ids"]:
             raise ValueError(f"Invalid TSV header format: {header}")
 
         for line_num, line in enumerate(f, start=2):
             parts = line.strip("\r\n").split("\t")
-            if len(parts) != 3:
-                raise ValueError(f"Line {line_num}: Expected 3 columns, found {len(parts)}")
+            if len(parts) != 2 and len(parts) != 3:
+                raise ValueError(f"Line {line_num}: Invalid column count {len(parts)}")
 
-            s1_id_str, s2_ids_str, s3_ids_str = parts
-            s1_id = int(s1_id_str)
-            seen_s1.add(s1_id)
+            s1_id_str = parts[0]
+            matched_str = parts[1] if len(parts) == 2 else f"{parts[1]},{parts[2]}".strip(",")
+            
+            seen_s1.add(s1_id_str)
             total_rows += 1
 
-            s2_list = [int(x) for x in s2_ids_str.split(",") if x]
-            s3_list = [int(x) for x in s3_ids_str.split(",") if x]
-
-            if not s2_list and not s3_list:
+            target_list = [x.strip() for x in matched_str.split(",") if x.strip()]
+            if not target_list:
                 singleton_count += 1
 
-            for s2_id in s2_list:
-                if s2_id in seen_s2:
-                    s2_duplicates += 1
-                seen_s2.add(s2_id)
-                total_s2_matches += 1
-
-            for s3_id in s3_list:
-                if s3_id in seen_s3:
-                    s3_duplicates += 1
-                seen_s3.add(s3_id)
-                total_s3_matches += 1
+            for tgt in target_list:
+                if tgt in seen_targets:
+                    duplicate_targets += 1
+                seen_targets.add(tgt)
+                total_matches += 1
 
     # Check 1: Row count
     row_count_match = (total_rows == expected_rows)
     logger.info(f"Check 1 [Row Count]: {total_rows:,} (Expected: {expected_rows:,}) -> {'PASS' if row_count_match else 'FAIL'}")
 
-    # Check 2: Exclusivity
-    exclusivity_pass = (s2_duplicates == 0 and s3_duplicates == 0)
-    logger.info(f"Check 2 [Target Exclusivity]: S2 Dups: {s2_duplicates}, S3 Dups: {s3_duplicates} -> {'PASS' if exclusivity_pass else 'FAIL'}")
+    # Check 2: Target Exclusivity
+    exclusivity_pass = (duplicate_targets == 0)
+    logger.info(f"Check 2 [Target Exclusivity]: Duplicate Targets: {duplicate_targets} -> {'PASS' if exclusivity_pass else 'FAIL'}")
 
     # Check 3: S1 Uniqueness
     s1_unique_pass = (len(seen_s1) == total_rows)
@@ -108,13 +99,10 @@ def run_output_audit(
         "sha256": file_hash,
         "total_rows": total_rows,
         "unique_s1_count": len(seen_s1),
-        "total_s2_matched": total_s2_matches,
-        "unique_s2_matched": len(seen_s2),
-        "total_s3_matched": total_s3_matches,
-        "unique_s3_matched": len(seen_s3),
+        "total_targets_matched": total_matches,
+        "unique_targets_matched": len(seen_targets),
         "singletons_count": singleton_count,
-        "s2_duplicate_conflicts": s2_duplicates,
-        "s3_duplicate_conflicts": s3_duplicates,
+        "duplicate_target_conflicts": duplicate_targets,
     }
 
     manifest_path = p.parent / "submission_manifest.json"

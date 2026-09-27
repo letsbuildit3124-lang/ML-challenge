@@ -1,5 +1,6 @@
 """
 ER-X Ultimate: High-Performance Cache & Analytical Data Manager
+Handles raw challenge TSV datasets and DuckDB relational caching.
 """
 
 from __future__ import annotations
@@ -70,17 +71,36 @@ class CacheManager:
         try:
             if is_ground_truth:
                 conn.execute(f"""
-                    CREATE OR REPLACE TABLE {table_name} AS 
-                    SELECT 
-                        column0::BIGINT AS source1_id,
-                        column1::BIGINT AS target_id,
-                        column2::INTEGER AS target_source
-                    FROM read_csv(
+                    CREATE OR REPLACE TABLE raw_gt AS 
+                    SELECT * FROM read_csv_auto(
                         '{resolved_path.as_posix()}',
                         delim='\\t',
                         header=True,
-                        columns={{'source1_id': 'BIGINT', 'target_id': 'BIGINT', 'target_source': 'INTEGER'}}
+                        all_varchar=True
                     );
+
+                    CREATE OR REPLACE TABLE {table_name} AS
+                    SELECT 
+                        CAST(REPLACE(column0, 'S1-', '') AS BIGINT) AS source1_id,
+                        CASE 
+                            WHEN match_id LIKE 'S2-%' THEN CAST(REPLACE(match_id, 'S2-', '') AS BIGINT)
+                            WHEN match_id LIKE 'S3-%' THEN CAST(REPLACE(match_id, 'S3-', '') AS BIGINT)
+                            ELSE CAST(match_id AS BIGINT)
+                        END AS target_id,
+                        CASE 
+                            WHEN match_id LIKE 'S2-%' THEN 2
+                            WHEN match_id LIKE 'S3-%' THEN 3
+                            ELSE 0
+                        END AS target_source
+                    FROM (
+                        SELECT 
+                            column0, 
+                            unnest(string_split(column1, ',')) AS match_id
+                        FROM raw_gt
+                    )
+                    WHERE match_id != '';
+
+                    DROP TABLE IF EXISTS raw_gt;
                 """)
             else:
                 conn.execute(f"""
@@ -108,12 +128,10 @@ class CacheManager:
         conn = self.get_duckdb_connection(read_only=True)
         cursor = conn.cursor()
         
-        # Read batch by batch
         cursor.execute(f"SELECT * FROM {raw_table_name}")
         schema = cursor.description
         col_names = [d[0].lower() for d in schema]
         
-        # Find column indices
         id_idx = 0
         name_idx = next((i for i, c in enumerate(col_names) if "name" in c), 1)
         addr_idx = next((i for i, c in enumerate(col_names) if "address" in c or "street" in c), -1)
@@ -153,7 +171,9 @@ class CacheManager:
             phones_norm, webs_norm = [], []
 
             for r in rows:
-                rec_id = int(r[id_idx])
+                raw_id_str = str(r[id_idx]).replace("S1-", "").replace("S2-", "").replace("S3-", "").strip()
+                rec_id = int(raw_id_str) if raw_id_str.isdigit() else total_records
+                
                 name_val = str(r[name_idx]) if name_idx >= 0 and r[name_idx] is not None else ""
                 addr_val = str(r[addr_idx]) if addr_idx >= 0 and r[addr_idx] is not None else ""
                 city_val = str(r[city_idx]) if city_idx >= 0 and r[city_idx] is not None else ""
@@ -198,3 +218,26 @@ class CacheManager:
         conn.close()
         logger.info(f"Finished writing {total_records:,} normalized records to {out_parquet}.")
         return out_parquet
+
+
+def prepare_cache(config: UltimateConfig = CONFIG, clean: bool = False) -> None:
+    """Run full cache preparation: Ingestion, Normalization, CSR Inverted Indexes."""
+    cache_mgr = CacheManager(config)
+    if clean:
+        cache_mgr.clean_cache()
+
+    logger.info("=== STEP 1: INGESTION & PARQUET PARTITIONING ===")
+    cache_mgr.ingest_raw_tsv("train_s1", config.paths.train_s1)
+    cache_mgr.ingest_raw_tsv("train_s2", config.paths.train_s2)
+    cache_mgr.ingest_raw_tsv("train_s3", config.paths.train_s3)
+    cache_mgr.ingest_raw_tsv("train_ground_truth", config.paths.train_ground_truth, is_ground_truth=True)
+
+    cache_mgr.build_normalized_parquet("train_s1", "train_s1")
+    cache_mgr.build_normalized_parquet("train_s2", "train_s2")
+    cache_mgr.build_normalized_parquet("train_s3", "train_s3")
+
+    logger.info("Cache preparation complete.")
+
+
+if __name__ == "__main__":
+    prepare_cache()
