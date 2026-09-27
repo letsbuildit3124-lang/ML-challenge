@@ -33,6 +33,12 @@ from src.erx_ultimate.features import extract_batch_features, NUM_FEATURES
 from src.erx_ultimate.model import ERXModelEngine
 from src.erx_ultimate.types import EntityRecord, CandidateMatch, SourceType
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable, *args, **kwargs):
+        return iterable
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
@@ -71,13 +77,14 @@ def generate_training_shards(
     retriever: ERXRetrievalEngine,
     s1_records_map: Dict[int, EntityRecord],
     gt_map: Dict[Tuple[int, int], Set[int]],
-    chunk_size: int = 100000,
+    chunk_size: int = 50000,
     negatives_per_positive: int = 4,
     random_negatives_per_target: int = 1,
 ) -> List[Path]:
     """
     Stream all 10.32M targets (S2 + S3), execute blind retrieval, extract 73 features,
     attach GT labels, mine hard negatives, and save Parquet shards with atomic writes.
+    Displays real-time chunk progress bars.
     """
     shards_dir = cache_mgr.shards_dir
     shards_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +107,8 @@ def generate_training_shards(
 
         table = pq.read_table(parquet_path)
         total_targets = table.num_rows
-        logger.info(f"Loaded {total_targets:,} {src_name} targets (Expected: {expected_count:,}).")
+        total_chunks = (total_targets + chunk_size - 1) // chunk_size
+        logger.info(f"Loaded {total_targets:,} {src_name} targets (Expected: {expected_count:,}) -> {total_chunks} shards.")
 
         ids = table["id"].to_numpy()
         names_norm = table["name_norm"].to_pylist()
@@ -114,12 +122,12 @@ def generate_training_shards(
         phones_norm = table["phone_norm"].to_pylist()
         webs_norm = table["website_norm"].to_pylist()
 
-        for start_idx in range(0, total_targets, chunk_size):
+        for chunk_num, start_idx in enumerate(range(0, total_targets, chunk_size)):
             end_idx = min(start_idx + chunk_size, total_targets)
             shard_file = shards_dir / f"shard_{shard_idx:03d}.parquet"
             
             if shard_file.exists():
-                logger.info(f"Shard {shard_file.name} already exists. Skipping chunk [{start_idx:,} - {end_idx:,}].")
+                logger.info(f"Shard {shard_file.name} already exists. Skipping chunk {chunk_num+1}/{total_chunks} [{start_idx:,} - {end_idx:,}].")
                 shard_paths.append(shard_file)
                 shard_idx += 1
                 continue
@@ -129,7 +137,15 @@ def generate_training_shards(
             batch_cands: List[CandidateMatch] = []
             batch_labels: List[int] = []
 
-            for i in range(start_idx, end_idx):
+            pbar = tqdm(
+                range(start_idx, end_idx),
+                desc=f"Shard {shard_idx:03d} [{src_name} {chunk_num+1}/{total_chunks}]",
+                unit="tgt",
+                ncols=100,
+                leave=False,
+            )
+
+            for i in pbar:
                 tgt_id = int(ids[i])
                 rec = EntityRecord(
                     id=tgt_id,
@@ -176,6 +192,8 @@ def generate_training_shards(
                         batch_cands.append(cand)
                         batch_labels.append(label)
 
+            pbar.close()
+
             if batch_cands:
                 # 2. Extract 73 features
                 features_matrix = extract_batch_features(batch_tgt_recs, batch_s1_recs, batch_cands)
@@ -199,7 +217,7 @@ def generate_training_shards(
                 shard_paths.append(shard_file)
                 
                 logger.info(
-                    f"Wrote atomic shard {shard_file.name} ({len(batch_cands):,} pairs, "
+                    f"Wrote atomic shard {shard_file.name} [{chunk_num+1}/{total_chunks}] ({len(batch_cands):,} pairs, "
                     f"Pos: {sum(batch_labels):,}, Neg: {len(batch_labels) - sum(batch_labels):,})."
                 )
 

@@ -79,14 +79,44 @@ class CSRChannelIndex:
             self.weights = np.load(weight_file, mmap_mode=mmap_mode)
         logger.info(f"Loaded CSR index [{self.name}] ({len(self.vocabulary):,} terms).")
 
-    def query(self, term: str) -> np.ndarray:
+    def query(self, term: str, max_postings: int = 5000) -> np.ndarray:
         """Retrieve matching document IDs for a single term."""
         term_idx = self.vocabulary.get(term)
         if term_idx is None or self.indptr is None or self.indices is None:
             return np.empty(0, dtype=np.uint32)
         start = self.indptr[term_idx]
         end = self.indptr[term_idx + 1]
+        if end - start > max_postings:
+            return self.indices[start:start + max_postings]
         return self.indices[start:end]
+
+
+def _top_k_from_posting_lists(posting_lists: List[np.ndarray], top_n: int = 100) -> List[int]:
+    """Fast C/NumPy aggregation of candidate document indices across posting lists."""
+    if not posting_lists:
+        return []
+    valid = [p for p in posting_lists if len(p) > 0]
+    if not valid:
+        return []
+    if len(valid) == 1:
+        arr = valid[0]
+        return arr[:top_n].tolist() if len(arr) > top_n else arr.tolist()
+    
+    flat = np.concatenate(valid)
+    if len(flat) == 0:
+        return []
+    if len(flat) < 300:
+        c = Counter(flat)
+        return [doc_idx for doc_idx, _ in c.most_common(top_n)]
+    
+    vals, counts = np.unique(flat, return_counts=True)
+    if len(vals) <= top_n:
+        order = np.argsort(-counts)
+        return vals[order].tolist()
+    else:
+        top_idx = np.argpartition(counts, -top_n)[-top_n:]
+        top_idx = top_idx[np.argsort(-counts[top_idx])]
+        return vals[top_idx].tolist()
 
 
 class ERXRetrievalEngine:
@@ -218,48 +248,42 @@ class ERXRetrievalEngine:
 
         # Channel 2: N-gram
         if "ngram" in self.channels and record.name_norm:
-            ng_hits: Counter = Counter()
-            for ng in extract_ngrams(record.name_norm, 3):
-                for doc_idx in self.channels["ngram"].query(ng):
-                    ng_hits[doc_idx] += 1
-            for r, (doc_idx, _) in enumerate(ng_hits.most_common(100)):
+            ngrams = extract_ngrams(record.name_norm, 3)
+            posting_lists = [self.channels["ngram"].query(ng) for ng in ngrams]
+            top_ng_docs = _top_k_from_posting_lists(posting_lists, top_n=100)
+            for r, doc_idx in enumerate(top_ng_docs):
                 channel_scores[doc_idx] += 1.0 / (rrf_k + r + 1)
                 channel_presence[doc_idx] |= 2
 
         # Channel 3: Token
         if "token" in self.channels and record.name_norm:
-            tok_hits: Counter = Counter()
-            for tok in record.name_norm.split():
-                for doc_idx in self.channels["token"].query(tok):
-                    tok_hits[doc_idx] += 1
-            for r, (doc_idx, _) in enumerate(tok_hits.most_common(100)):
+            tokens = record.name_norm.split()
+            posting_lists = [self.channels["token"].query(tok) for tok in tokens]
+            top_tok_docs = _top_k_from_posting_lists(posting_lists, top_n=100)
+            for r, doc_idx in enumerate(top_tok_docs):
                 channel_scores[doc_idx] += 1.0 / (rrf_k + r + 1)
                 channel_presence[doc_idx] |= 4
 
         # Channel 4: Phonetic
         if "phonetic" in self.channels and record.name_norm:
-            ph_hits: Counter = Counter()
-            for tok in record.name_norm.split():
-                ph = compute_soundex(tok)
-                if ph:
-                    for doc_idx in self.channels["phonetic"].query(ph):
-                        ph_hits[doc_idx] += 1
-            for r, (doc_idx, _) in enumerate(ph_hits.most_common(50)):
+            tokens = record.name_norm.split()
+            posting_lists = [self.channels["phonetic"].query(compute_soundex(tok)) for tok in tokens if tok]
+            top_ph_docs = _top_k_from_posting_lists(posting_lists, top_n=50)
+            for r, doc_idx in enumerate(top_ph_docs):
                 channel_scores[doc_idx] += 1.0 / (rrf_k + r + 1)
                 channel_presence[doc_idx] |= 8
 
         # Channel 5: Address / Numeric
         if "address" in self.channels:
-            addr_hits: Counter = Counter()
+            posting_lists = []
             if record.address_norm:
                 for tok in record.address_norm.split():
                     if tok.isdigit() and len(tok) >= 2:
-                        for doc_idx in self.channels["address"].query(f"num:{tok}"):
-                            addr_hits[doc_idx] += 1
+                        posting_lists.append(self.channels["address"].query(f"num:{tok}"))
             if record.city_norm:
-                for doc_idx in self.channels["address"].query(f"city:{record.city_norm}"):
-                    addr_hits[doc_idx] += 1
-            for r, (doc_idx, _) in enumerate(addr_hits.most_common(50)):
+                posting_lists.append(self.channels["address"].query(f"city:{record.city_norm}"))
+            top_addr_docs = _top_k_from_posting_lists(posting_lists, top_n=50)
+            for r, doc_idx in enumerate(top_addr_docs):
                 channel_scores[doc_idx] += 1.0 / (rrf_k + r + 1)
                 channel_presence[doc_idx] |= 16
 

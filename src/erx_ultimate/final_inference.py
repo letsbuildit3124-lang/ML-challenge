@@ -29,6 +29,12 @@ from src.erx_ultimate.features import extract_batch_features, NUM_FEATURES
 from src.erx_ultimate.model import ERXModelEngine
 from src.erx_ultimate.postprocessing import PostProcessingEngine
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable, *args, **kwargs):
+        return iterable
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
@@ -53,7 +59,8 @@ def stream_target_source_inference(
 
     table = pq.read_table(parquet_path)
     total_targets = table.num_rows
-    logger.info(f"Loaded {total_targets:,} target records.")
+    total_batches = (total_targets + batch_size - 1) // batch_size
+    logger.info(f"Loaded {total_targets:,} target records -> {total_batches} batches.")
 
     ids = table["id"].to_numpy()
     names_norm = table["name_norm"].to_pylist()
@@ -67,17 +74,23 @@ def stream_target_source_inference(
     phones_norm = table["phone_norm"].to_pylist()
     webs_norm = table["website_norm"].to_pylist()
 
-    start_time = time.time()
-    processed = 0
     all_scored_pairs: List[ScoredPair] = []
 
-    for i in range(0, total_targets, batch_size):
+    for batch_num, i in enumerate(range(0, total_targets, batch_size)):
         end_idx = min(i + batch_size, total_targets)
         batch_candidates: List[CandidateMatch] = []
         batch_tgt_recs: List[EntityRecord] = []
         batch_s1_recs: List[EntityRecord] = []
 
-        for idx in range(i, end_idx):
+        pbar = tqdm(
+            range(i, end_idx),
+            desc=f"Inference [{src_name} {batch_num+1}/{total_batches}]",
+            unit="tgt",
+            ncols=100,
+            leave=False,
+        )
+
+        for idx in pbar:
             rec = EntityRecord(
                 id=int(ids[idx]),
                 source=source_type,
@@ -101,6 +114,8 @@ def stream_target_source_inference(
                     batch_tgt_recs.append(rec)
                     batch_s1_recs.append(s1_rec)
 
+        pbar.close()
+
         if batch_candidates:
             X_batch = extract_batch_features(batch_tgt_recs, batch_s1_recs, batch_candidates)
             raw_probs, cal_probs = model_engine.predict_batch(X_batch)
@@ -115,11 +130,7 @@ def stream_target_source_inference(
                     rrf_score=cand.rrf_score,
                 ))
 
-        processed = end_idx
-        elapsed = time.time() - start_time
-        rate = processed / elapsed if elapsed > 0 else 0
-        if processed % 100000 == 0 or processed == total_targets:
-            logger.info(f"[{src_name}] Processed {processed:,} / {total_targets:,} targets ({rate:.1f} tgt/sec). {get_memory_summary()}")
+        logger.info(f"[{src_name}] Batch {batch_num+1}/{total_batches} done. Scored pairs: {len(all_scored_pairs):,}. {get_memory_summary()}")
 
     logger.info(f"[{src_name}] Resolving target ownership over {len(all_scored_pairs):,} scored pairs...")
     ownership = post_engine.resolve_target_ownership(all_scored_pairs)
