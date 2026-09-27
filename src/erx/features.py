@@ -143,7 +143,7 @@ class ERXFeatureExtractor:
         name_rel_len_diff = name_len_diff / max(len_s1_n, len_t_n, 1)
         name_is_missing = 1.0 if s1.is_name_missing or target.is_name_missing else 0.0
 
-        # Token set metrics
+        # Token set metrics (computed once)
         s1_n_set = s1.name_tok_set
         t_n_set = target.name_tok_set
         s1_n_len = len(s1_n_set)
@@ -160,30 +160,55 @@ class ERXFeatureExtractor:
 
         name_prefix_equal = 1.0 if (s1_n and t_n and s1_n[:4] == t_n[:4]) else 0.0
 
-        # RapidFuzz C++ metrics
-        name_lev = Levenshtein.normalized_similarity(s1_n, t_n) if (s1_n or t_n) else 0.0
-        name_jw = JaroWinkler.similarity(s1_n, t_n) if (s1_n or t_n) else 0.0
-        name_fuzz_ratio = fuzz.ratio(s1_n, t_n) / 100.0 if (s1_n and t_n) else 0.0
-        name_tok_sort = fuzz.token_sort_ratio(s1_n, t_n) / 100.0 if (s1_n and t_n) else 0.0
-        name_tok_set = fuzz.token_set_ratio(s1_n, t_n) / 100.0 if (s1_n and t_n) else 0.0
+        # RapidFuzz & N-Gram metrics (Fast-path for exact canonical matches)
+        if s1_n and t_n:
+            if s1_n == t_n:
+                name_lev = 1.0
+                name_jw = 1.0
+                name_fuzz_ratio = 1.0
+                name_tok_sort = 1.0
+                name_tok_set = 1.0
+                name_char3_jaccard = 1.0
+                name_char4_jaccard = 1.0
+                name_char5_jaccard = 1.0
+            else:
+                name_lev = Levenshtein.normalized_similarity(s1_n, t_n)
+                name_jw = JaroWinkler.similarity(s1_n, t_n)
+                name_fuzz_ratio = fuzz.ratio(s1_n, t_n) / 100.0
+                name_tok_sort = fuzz.token_sort_ratio(s1_n, t_n) / 100.0
+                name_tok_set = fuzz.token_set_ratio(s1_n, t_n) / 100.0
 
-        # N-gram similarities
-        g3_inter = len(s1.name_char3_set & target.name_char3_set)
-        g3_union = len(s1.name_char3_set | target.name_char3_set)
-        name_char3_jaccard = (g3_inter / g3_union) if g3_union > 0 else 0.0
+                s1_c3 = s1.name_char3_set
+                t_c3 = target.name_char3_set
+                g3_inter = len(s1_c3 & t_c3)
+                g3_union = len(s1_c3 | t_c3)
+                name_char3_jaccard = (g3_inter / g3_union) if g3_union > 0 else 0.0
 
-        g4_inter = len(s1.name_char4_set & target.name_char4_set)
-        g4_union = len(s1.name_char4_set | target.name_char4_set)
-        name_char4_jaccard = (g4_inter / g4_union) if g4_union > 0 else 0.0
+                s1_c4 = s1.name_char4_set
+                t_c4 = target.name_char4_set
+                g4_inter = len(s1_c4 & t_c4)
+                g4_union = len(s1_c4 | t_c4)
+                name_char4_jaccard = (g4_inter / g4_union) if g4_union > 0 else 0.0
 
-        g5_inter = len(s1.name_char5_set & target.name_char5_set)
-        g5_union = len(s1.name_char5_set | target.name_char5_set)
-        name_char5_jaccard = (g5_inter / g5_union) if g5_union > 0 else 0.0
+                s1_c5 = s1.name_char5_set
+                t_c5 = target.name_char5_set
+                g5_inter = len(s1_c5 & t_c5)
+                g5_union = len(s1_c5 | t_c5)
+                name_char5_jaccard = (g5_inter / g5_union) if g5_union > 0 else 0.0
+        else:
+            name_lev = 0.0
+            name_jw = 0.0
+            name_fuzz_ratio = 0.0
+            name_tok_sort = 0.0
+            name_tok_set = 0.0
+            name_char3_jaccard = 0.0
+            name_char4_jaccard = 0.0
+            name_char5_jaccard = 0.0
 
         name_phonetic_match = 1.0 if (s1.name_phonetic_sig and s1.name_phonetic_sig == target.name_phonetic_sig) else 0.0
 
         rare_token_overlap = 0.0
-        if self.token_idf:
+        if self.token_idf and n_inter > 0:
             shared = s1_n_set & t_n_set
             rare_token_overlap = sum(self.token_idf.get(t, 0.0) for t in shared)
 
@@ -216,7 +241,7 @@ class ERXFeatureExtractor:
         addr_tokens_missing_cnt = float(len(s1_a_set - t_a_set))
         addr_tokens_extra_cnt = float(len(t_a_set - s1_a_set))
 
-        # House & numeric overlaps
+        # House & numeric overlaps (computed once)
         s1_h = s1.house_numbers
         t_h = target.house_numbers
         num_inter = len(s1_h & t_h)
@@ -225,12 +250,12 @@ class ERXFeatureExtractor:
         addr_num_jaccard = (num_inter / num_union) if num_union > 0 else (1.0 if len(s1_h) == 0 and len(t_h) == 0 else 0.0)
 
         addr_number_exact = 1.0 if (s1_h and t_h and s1_h == t_h) else 0.0
-        addr_number_conflict = 1.0 if (s1_h and t_h and not (s1_h & t_h)) else 0.0
+        addr_number_conflict = 1.0 if (s1_h and t_h and not num_inter) else 0.0
 
         # Postal overlap
         s1_p = s1.postal_codes
         t_p = target.postal_codes
-        addr_postal_exact = 1.0 if (s1_p and t_p and (s1_p & t_p)) else 0.0
+        addr_postal_exact = 1.0 if (s1_p and t_p and bool(s1_p & t_p)) else 0.0
         addr_postal_prefix = 0.0
         if s1_p and t_p:
             p1 = next(iter(s1_p))
@@ -238,10 +263,22 @@ class ERXFeatureExtractor:
             if len(p1) >= 3 and len(p2) >= 3 and p1[:3] == p2[:3]:
                 addr_postal_prefix = 1.0
 
-        addr_lev = Levenshtein.normalized_similarity(s1_a, t_a) if (s1_a or t_a) else 0.0
-        addr_jw = JaroWinkler.similarity(s1_a, t_a) if (s1_a or t_a) else 0.0
-        addr_tok_sort = fuzz.token_sort_ratio(s1_a, t_a) / 100.0 if (s1_a and t_a) else 0.0
-        addr_tok_set = fuzz.token_set_ratio(s1_a, t_a) / 100.0 if (s1_a and t_a) else 0.0
+        if s1_a and t_a:
+            if s1_a == t_a:
+                addr_lev = 1.0
+                addr_jw = 1.0
+                addr_tok_sort = 1.0
+                addr_tok_set = 1.0
+            else:
+                addr_lev = Levenshtein.normalized_similarity(s1_a, t_a)
+                addr_jw = JaroWinkler.similarity(s1_a, t_a)
+                addr_tok_sort = fuzz.token_sort_ratio(s1_a, t_a) / 100.0
+                addr_tok_set = fuzz.token_set_ratio(s1_a, t_a) / 100.0
+        else:
+            addr_lev = 0.0
+            addr_jw = 0.0
+            addr_tok_sort = 0.0
+            addr_tok_set = 0.0
 
         # -------------------------------------------------------------
         # CROSS-FIELD & COUNTRY

@@ -103,13 +103,18 @@ def offline_transliterate(text: Optional[str]) -> str:
     return "".join(out)
 
 
+LEGAL_SUFFIXES_RE = re.compile(LEGAL_SUFFIXES_REGEX, flags=re.IGNORECASE)
+PUNCT_RE = re.compile(r'[^\w\s]')
+WHITESPACE_RE = re.compile(r'\s+')
+
+
 def normalize_text(text: Optional[str]) -> str:
     """Standardizes casing, ampersands, punctuation, and whitespace."""
     if not text or not isinstance(text, str):
         return ""
     text = unicodedata.normalize('NFKD', text).lower().replace('&', ' and ')
-    text = re.sub(r'[^\w\s]', ' ', text)
-    return re.sub(r'\s+', ' ', text).strip()
+    text = PUNCT_RE.sub(' ', text)
+    return WHITESPACE_RE.sub(' ', text).strip()
 
 
 def normalize_address(text: Optional[str]) -> str:
@@ -126,8 +131,8 @@ def compact_name(text: Optional[str]) -> str:
     norm = normalize_text(text)
     if not norm:
         return ""
-    cleaned = re.sub(LEGAL_SUFFIXES_REGEX, "", norm)
-    return re.sub(r'\s+', '', cleaned)
+    cleaned = LEGAL_SUFFIXES_RE.sub("", norm)
+    return WHITESPACE_RE.sub('', cleaned)
 
 
 def compute_soundex(token: str) -> str:

@@ -132,14 +132,18 @@ class ERXRetrievalEngine:
         Accumulates candidates in compact dictionary: s1_internal_id -> (best_retrieval_score, provenance_mask).
         """
         max_k = top_k or self.config.max_total_candidates_per_target
-        candidate_map: Dict[int, Tuple[float, int]] = {}
+        cand_scores: Dict[int, float] = {}
+        cand_masks: Dict[int, int] = {}
 
         def add_candidate(s1_id: int, score: float, bit: int):
-            if s1_id in candidate_map:
-                curr_score, curr_mask = candidate_map[s1_id]
-                candidate_map[s1_id] = (max(curr_score, score), curr_mask | bit)
+            old_score = cand_scores.get(s1_id)
+            if old_score is not None:
+                if score > old_score:
+                    cand_scores[s1_id] = score
+                cand_masks[s1_id] |= bit
             else:
-                candidate_map[s1_id] = (score, bit)
+                cand_scores[s1_id] = score
+                cand_masks[s1_id] = bit
 
         # -------------------------------------------------------------
         # Channel A: Exact & Learned Keys
@@ -233,19 +237,24 @@ class ERXRetrievalEngine:
         # -------------------------------------------------------------
         # Convert candidate map to list of CandidatePair
         # -------------------------------------------------------------
+        t_int_id = target.internal_id
         candidates = [
             CandidatePair(
-                target_internal_id=target.internal_id,
+                target_internal_id=t_int_id,
                 s1_internal_id=s1_id,
-                retrieval_score=score,
-                provenance_mask=mask
+                retrieval_score=cand_scores[s1_id],
+                provenance_mask=cand_masks[s1_id]
             )
-            for s1_id, (score, mask) in candidate_map.items()
+            for s1_id in cand_scores
         ]
 
         # Sort candidates by retrieval score descending
-        candidates.sort(key=lambda c: c.retrieval_score, reverse=True)
-        return candidates[:max_k]
+        if len(candidates) > max_k:
+            candidates.sort(key=lambda c: c.retrieval_score, reverse=True)
+            return candidates[:max_k]
+        elif len(candidates) > 1:
+            candidates.sort(key=lambda c: c.retrieval_score, reverse=True)
+        return candidates
 
     def retrieve_batch_with_tfidf(
         self,

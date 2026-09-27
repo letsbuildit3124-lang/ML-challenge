@@ -35,7 +35,14 @@ import pyarrow.parquet as pq
 from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
 from src.erx.types import InternalIDMapper, MultiViewRecord, CompactS1Record, char_ngrams_set
-from src.erx.normalization import ERXNormalizer
+from src.erx.normalization import (
+    ERXNormalizer,
+    normalize_text,
+    normalize_address,
+    compact_name,
+    offline_transliterate,
+    compute_phonetic_signature,
+)
 
 logger = logging.getLogger("erx.cache_manager")
 
@@ -54,7 +61,6 @@ def _normalize_raw_tsv_batch(
     is_s3: bool = False,
 ) -> Dict[str, List[Any]]:
     """Parallel worker for initial one-time TSV normalization before Parquet caching."""
-    normalizer = ERXNormalizer()
     entity_ids = []
     countries = []
     raw_names = []
@@ -77,27 +83,50 @@ def _normalize_raw_tsv_batch(
 
     for r in rows:
         eid, b_name, b_addr, country = r[0], r[1] or "", r[2] or "", r[3] or ""
-        rec = normalizer.normalize_record(0, eid, b_name, b_addr, country, is_s2=is_s2, is_s3=is_s3)
+        raw_n = b_name.strip()
+        raw_a = b_addr.strip()
+        raw_c = country.strip().upper()
 
-        entity_ids.append(rec.entity_id)
-        countries.append(rec.country)
-        raw_names.append(rec.raw_name)
-        norm_names.append(rec.norm_name)
-        compact_names.append(rec.compact_name)
-        translit_names.append(rec.translit_name)
-        translit_comp_names.append(rec.translit_comp_name)
-        learned_names.append(rec.learned_name)
-        sorted_token_names.append(rec.sorted_token_name)
-        name_phonetic_sigs.append(rec.name_phonetic_sig)
-        raw_addrs.append(rec.raw_addr)
-        norm_addrs.append(rec.norm_addr)
-        translit_addrs.append(rec.translit_addr)
-        numeric_signatures.append(rec.numeric_signature)
-        house_numbers_strs.append(" ".join(rec.house_numbers))
-        postal_codes_strs.append(" ".join(rec.postal_codes))
-        name_tokens_strs.append(" ".join(rec.name_tokens))
-        translit_tokens_strs.append(" ".join(rec.translit_tokens))
-        addr_tokens_strs.append(" ".join(rec.addr_tokens))
+        norm_n = normalize_text(raw_n)
+        is_ascii = norm_n.isascii()
+        translit_n = normalize_text(offline_transliterate(raw_n)) if not is_ascii else norm_n
+        learned_n = norm_n
+        comp_n = compact_name(learned_n)
+        translit_comp_n = compact_name(translit_n)
+
+        name_toks = norm_n.split() if norm_n else []
+        translit_toks = translit_n.split() if translit_n else []
+        sorted_tok_n = " ".join(sorted(name_toks))
+        phonetic_sig = compute_phonetic_signature(translit_n if not is_ascii else norm_n)
+
+        norm_a = normalize_address(raw_a)
+        translit_a = normalize_address(offline_transliterate(raw_a)) if not norm_a.isascii() else norm_a
+        addr_toks = norm_a.split() if norm_a else []
+
+        num_toks = [w for w in addr_toks if w.isdigit()]
+        num_sig = "-".join(sorted(num_toks)) if num_toks else ""
+        hn_str = " ".join(num_toks[:2]) if num_toks else ""
+        pc_str = " ".join(w for w in num_toks if len(w) in (5, 6))
+
+        entity_ids.append(eid)
+        countries.append(raw_c)
+        raw_names.append(raw_n)
+        norm_names.append(norm_n)
+        compact_names.append(comp_n)
+        translit_names.append(translit_n)
+        translit_comp_names.append(translit_comp_n)
+        learned_names.append(learned_n)
+        sorted_token_names.append(sorted_tok_n)
+        name_phonetic_sigs.append(phonetic_sig)
+        raw_addrs.append(raw_a)
+        norm_addrs.append(norm_a)
+        translit_addrs.append(translit_a)
+        numeric_signatures.append(num_sig)
+        house_numbers_strs.append(hn_str)
+        postal_codes_strs.append(pc_str)
+        name_tokens_strs.append(" ".join(name_toks))
+        translit_tokens_strs.append(" ".join(translit_toks))
+        addr_tokens_strs.append(" ".join(addr_toks))
 
     return {
         "entity_id": entity_ids,
@@ -129,28 +158,49 @@ def ensure_cached_parquet(
     is_s3: bool = False,
     num_workers: int = 8,
 ) -> Path:
-    """Checks if normalized Parquet cache exists. If missing, creates it in parallel via DuckDB/PyArrow."""
+    """Checks if normalized Parquet cache exists and is valid. If missing or corrupted, creates it atomically."""
     if parquet_path.exists():
-        logger.info(f"Using cached Parquet: {parquet_path.name} ({parquet_path.stat().st_size / (1024*1024):.1f} MB)")
-        return parquet_path
+        is_valid = False
+        try:
+            with pq.ParquetFile(parquet_path) as pq_test:
+                if pq_test.metadata.num_rows > 0:
+                    is_valid = True
+        except Exception:
+            is_valid = False
+
+        if is_valid:
+            logger.info(f"Using cached Parquet: {parquet_path.name} ({parquet_path.stat().st_size / (1024*1024):.1f} MB)")
+            return parquet_path
+        else:
+            logger.warning(f"Corrupted Parquet detected at {parquet_path.name}. Rebuilding...")
+            gc.collect()
+            time.sleep(0.5)
+            try:
+                parquet_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = parquet_path.with_suffix(".tmp.parquet")
+    tmp_path.unlink(missing_ok=True)
+
     t0 = time.time()
     logger.info(f"Creating Parquet cache: {tsv_path.name} -> {parquet_path.name}...")
 
+    tsv_path_str = str(tsv_path).replace("\\", "/")
     con = get_safe_duckdb_connection(num_threads=min(4, num_workers), max_memory_gb="6GB")
-    rows = con.execute(f"SELECT entity_id, business_name, business_address, country FROM read_csv_auto('{tsv_path}', sep='\\t', header=True)").fetchall()
+    rows = con.execute(f"SELECT entity_id, business_name, business_address, country FROM read_csv_auto('{tsv_path_str}', sep='\\t', header=True)").fetchall()
     con.close()
 
     total_rows = len(rows)
-    logger.info(f"Read {total_rows:,} raw rows from {tsv_path.name} in {time.time() - t0:.2f}s. Normalizing...")
+    logger.info(f"Read {total_rows:,} raw rows from {tsv_path.name} in {time.time() - t0:.2f}s. Normalizing in parallel...")
 
     sub_batch_size = max(1, math.ceil(total_rows / num_workers))
     sub_batches = [rows[i : i + sub_batch_size] for i in range(0, total_rows, sub_batch_size)]
     del rows
     gc.collect()
 
-    tables = []
+    writer = None
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = [
             executor.submit(_normalize_raw_tsv_batch, sb, is_s2, is_s3)
@@ -158,17 +208,17 @@ def ensure_cached_parquet(
         ]
         for fut in futures:
             res_dict = fut.result()
-            pa_table = pa.Table.from_pydict(res_dict)
-            tables.append(pa_table)
+            sub_table = pa.Table.from_pydict(res_dict)
+            if writer is None:
+                writer = pq.ParquetWriter(tmp_path, sub_table.schema, compression="snappy")
+            writer.write_table(sub_table)
+            del res_dict, sub_table
 
-    combined_table = pa.concat_tables(tables)
-    del tables
+    if writer is not None:
+        writer.close()
     gc.collect()
 
-    pq.write_table(combined_table, parquet_path, compression="snappy")
-    del combined_table
-    gc.collect()
-
+    os.replace(tmp_path, parquet_path)
     logger.info(f"Successfully cached {parquet_path.name} ({total_rows:,} records) in {time.time() - t0:.2f}s (RAM: {get_current_rss_mb():.1f} MB).")
     return parquet_path
 

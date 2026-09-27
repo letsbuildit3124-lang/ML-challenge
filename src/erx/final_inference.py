@@ -30,7 +30,7 @@ import logging
 from pathlib import Path
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Set, Tuple, Optional, Any
+from typing import Dict, List, Set, Tuple, Optional, Any, Union
 
 import duckdb
 import pyarrow.parquet as pq
