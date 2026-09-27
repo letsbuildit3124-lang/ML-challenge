@@ -238,12 +238,12 @@ def run_stage3_final_inference():
         ]:
             logger.info(f"Streaming and evaluating {src_name} ({parquet_file.name})...")
             pq_file = pq.ParquetFile(parquet_file)
-            num_row_groups = pq_file.num_row_groups
+            batch_idx = 0
 
-            for rg_idx in range(num_row_groups):
-                table_chunk = pq_file.read_row_group(rg_idx)
-                pydict = table_chunk.to_pydict()
-                del table_chunk
+            for batch in pq_file.iter_batches(batch_size=100000):
+                batch_idx += 1
+                pydict = batch.to_pydict()
+                del batch
 
                 chunk_len = len(pydict["entity_id"])
                 chunk_t0 = time.time()
@@ -423,12 +423,13 @@ def run_stage3_final_inference():
                 eta_mins = (remaining_targets / max(overall_rate, 1e-4)) / 60.0
                 pct_done = (total_targets_processed / total_target_count) * 100.0
 
-                logger.info(
-                    f"[{src_name}] Batch {rg_idx+1:2d}/{num_row_groups} | Evaluated: {total_targets_processed:,} / {total_target_count:,} "
-                    f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
-                    f"Matches: {total_matches_selected:,} (T1: {tier1_exact_matches:,}, T2: {tier2_fuzzy_matches:,}) | "
-                    f"RAM: {get_current_rss_mb():.1f} MB"
-                )
+                if batch_idx % 5 == 0 or total_targets_processed == total_target_count:
+                    logger.info(
+                        f"[{src_name}] Batch {batch_idx:3d} | Evaluated: {total_targets_processed:,} / {total_target_count:,} "
+                        f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
+                        f"Matches: {total_matches_selected:,} (T1: {tier1_exact_matches:,}, T2: {tier2_fuzzy_matches:,}) | "
+                        f"RAM: {get_current_rss_mb():.1f} MB"
+                    )
 
     target_stream_time = time.time() - t0_targets
     logger.info(f"Target streaming complete in {target_stream_time:.2f}s.")

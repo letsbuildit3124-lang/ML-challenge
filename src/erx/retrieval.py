@@ -120,18 +120,7 @@ class ERXRetrievalEngine:
                     pruned_postings[tok] = self.token_postings[tok][:max_posting]
         self.token_postings = pruned_postings
 
-        # Build Channel B: Sparse Char TF-IDF Matrix
-        logger.info(f"Fitting Char {self.config.tfidf_ngram_range} TF-IDF vectorizer...")
-        self.tfidf_vectorizer = TfidfVectorizer(
-            analyzer="char_wb",
-            ngram_range=self.config.tfidf_ngram_range,
-            sublinear_tf=self.config.tfidf_sublinear_tf,
-            max_features=self.config.tfidf_max_features,
-            min_df=self.config.tfidf_min_df,
-            dtype=np.float32,
-        )
-        self.s1_tfidf_matrix = self.tfidf_vectorizer.fit_transform(names_for_tfidf)
-        logger.info(f"S1 TF-IDF matrix shape: {self.s1_tfidf_matrix.shape}")
+        logger.info(f"6-Channel Inverted Index ready with {len(self.token_postings):,} rare tokens and {len(self.index_compact_name):,} compact names.")
 
     def retrieve_for_target(
         self,
