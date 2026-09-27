@@ -72,6 +72,24 @@ class CSRChannelIndex:
     def __iter__(self):
         return iter(self.lut)
 
+    def save(self, dir_path: Path, prefix: str) -> None:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        lut_file = dir_path / f"{prefix}_lut.pkl"
+        ids_file = dir_path / f"{prefix}_ids.npy"
+        with open(lut_file, "wb") as f:
+            pickle.dump(self.lut, f, protocol=pickle.HIGHEST_PROTOCOL)
+        np.save(ids_file, self.s1_ids)
+
+    def load_mmap(self, dir_path: Path, prefix: str) -> bool:
+        lut_file = dir_path / f"{prefix}_lut.pkl"
+        ids_file = dir_path / f"{prefix}_ids.npy"
+        if not lut_file.exists() or not ids_file.exists():
+            return False
+        with open(lut_file, "rb") as f:
+            self.lut = pickle.load(f)
+        self.s1_ids = np.load(ids_file, mmap_mode="r")
+        return True
+
     def __len__(self) -> int:
         return len(self.lut)
 
@@ -191,6 +209,46 @@ class ERXRetrievalEngine:
             f"CSR 6-Channel Inverted Index ready: {len(self.token_postings):,} rare tokens, "
             f"{len(self.index_compact_name):,} compact names, {len(self.index_norm_name):,} canonical names."
         )
+
+    def save_csr_indexes(self, csr_dir: Path) -> None:
+        """Persists CSR inverted indexes to disk for cross-process memory mapping."""
+        import pickle
+        csr_dir.mkdir(parents=True, exist_ok=True)
+        self.index_norm_name.save(csr_dir, "norm_name")
+        self.index_compact_name.save(csr_dir, "compact_name")
+        self.index_sorted_tokens.save(csr_dir, "sorted_tokens")
+        self.index_country_name.save(csr_dir, "country_name")
+        self.index_name_house.save(csr_dir, "name_house")
+        self.token_postings.save(csr_dir, "token_postings")
+        self.index_numeric_sig.save(csr_dir, "numeric_sig")
+        self.index_house_token.save(csr_dir, "house_token")
+        self.index_phonetic.save(csr_dir, "phonetic")
+        with open(csr_dir / "token_idf.pkl", "wb") as f:
+            pickle.dump(self.token_idf, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load_csr_indexes(self, csr_dir: Path) -> bool:
+        """Loads CSR inverted indexes from disk using zero-copy memory mapping."""
+        import pickle
+        if not (csr_dir / "norm_name_lut.pkl").exists():
+            return False
+        try:
+            ok = (
+                self.index_norm_name.load_mmap(csr_dir, "norm_name")
+                and self.index_compact_name.load_mmap(csr_dir, "compact_name")
+                and self.index_sorted_tokens.load_mmap(csr_dir, "sorted_tokens")
+                and self.index_country_name.load_mmap(csr_dir, "country_name")
+                and self.index_name_house.load_mmap(csr_dir, "name_house")
+                and self.token_postings.load_mmap(csr_dir, "token_postings")
+                and self.index_numeric_sig.load_mmap(csr_dir, "numeric_sig")
+                and self.index_house_token.load_mmap(csr_dir, "house_token")
+                and self.index_phonetic.load_mmap(csr_dir, "phonetic")
+            )
+            if ok and (csr_dir / "token_idf.pkl").exists():
+                with open(csr_dir / "token_idf.pkl", "rb") as f:
+                    self.token_idf = pickle.load(f)
+            return ok
+        except Exception:
+            return False
 
     def retrieve_for_target(
         self,
