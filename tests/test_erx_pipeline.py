@@ -10,7 +10,7 @@ import numpy as np
 
 from src.erx.types import CompactS1Record, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.features import ERXFeatureExtractor, FEATURE_NAMES
-from src.erx.final_train import save_feature_checkpoint, load_verified_feature_checkpoint
+from src.erx.final_train import write_training_shard_parquet, is_valid_shard
 
 
 def test_compact_s1_record_interface():
@@ -113,46 +113,41 @@ def test_feature_extraction_with_compact_s1():
     print(f"[PASS] Feature extraction test passed with {len(feats)} features.")
 
 
-def test_checkpoint_validation():
+from src.erx.final_train import write_training_shard_parquet, is_valid_shard
+
+
+def test_shard_writing_and_validation():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
-        ckpt_npz = tmp_path / "train_features.npz"
-        ckpt_meta = tmp_path / "train_features.meta.json"
+        shard_p = tmp_path / "shard_s2_0001.parquet"
+        shard_m = tmp_path / "shard_s2_0001.meta.json"
 
-        # 1. Save smoke checkpoint
-        X_smoke = np.ones((2500, 73), dtype=np.float32)
-        y_smoke = np.zeros((2500,), dtype=np.int32)
-        y_smoke[:200] = 1
-        save_feature_checkpoint(ckpt_npz, ckpt_meta, X_smoke, y_smoke, s1_count=10000, target_count=2500, mode="smoke")
+        # Mock chunk data
+        chunk_data = {
+            "s1_ids": np.array([10, 20, 30], dtype=np.int32),
+            "target_ids": np.array([1, 2, 3], dtype=np.int32),
+            "labels": np.array([1, 0, 0], dtype=np.int32),
+            "prov_masks": np.array([1, 2, 4], dtype=np.int32),
+            "features": np.ones((3, len(FEATURE_NAMES)), dtype=np.float32),
+        }
+        meta_info = {
+            "chunk_id": 1,
+            "source": "s2",
+            "rows_processed": 3,
+            "retrieval_hits": 1,
+        }
 
-        # 2. Test that FULL mode rejects smoke checkpoint
-        loaded = load_verified_feature_checkpoint(ckpt_npz, ckpt_meta, expected_s1_count=2206821, mode="full")
-        assert loaded is None, "FULL mode must reject smoke checkpoint!"
-        print("[PASS] Full mode correctly rejected smoke checkpoint.")
-
-        # 3. Test that SMOKE mode accepts smoke checkpoint
-        save_feature_checkpoint(ckpt_npz, ckpt_meta, X_smoke, y_smoke, s1_count=10000, target_count=2500, mode="smoke")
-        loaded = load_verified_feature_checkpoint(ckpt_npz, ckpt_meta, expected_s1_count=10000, mode="smoke")
-        assert loaded is not None, "Smoke mode should accept smoke checkpoint!"
-        assert loaded[0].shape == (2500, 73)
-        print("[PASS] Smoke mode correctly accepted smoke checkpoint.")
-
-        # 4. Save full production checkpoint
-        X_full = np.ones((500000, 73), dtype=np.float32)
-        y_full = np.zeros((500000,), dtype=np.int32)
-        y_full[:100000] = 1
-        save_feature_checkpoint(ckpt_npz, ckpt_meta, X_full, y_full, s1_count=2206821, target_count=500000, mode="full")
-
-        # 5. Test that FULL mode accepts valid full checkpoint
-        loaded = load_verified_feature_checkpoint(ckpt_npz, ckpt_meta, expected_s1_count=2206821, mode="full")
-        assert loaded is not None, "Full mode must accept valid full checkpoint!"
-        assert loaded[0].shape == (500000, 73)
-        assert int(np.sum(loaded[1])) == 100000
-        print("[PASS] Full mode successfully validated and loaded genuine production checkpoint.")
+        write_training_shard_parquet(shard_p, shard_m, chunk_data, meta_info)
+        valid, meta = is_valid_shard(shard_p, shard_m)
+        assert valid, "Shard should be valid!"
+        assert meta["total_pairs"] == 3
+        assert meta["positives"] == 1
+        assert meta["negatives"] == 2
+        print("[PASS] Shard parquet writing and validation test passed.")
 
 
 if __name__ == "__main__":
     test_compact_s1_record_interface()
     test_feature_extraction_with_compact_s1()
-    test_checkpoint_validation()
+    test_shard_writing_and_validation()
     print("\nALL ER-X ARCHITECTURE & CHECKPOINT INTEGRITY TESTS PASSED!")

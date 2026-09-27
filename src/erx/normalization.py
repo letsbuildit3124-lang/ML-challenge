@@ -16,7 +16,7 @@ from src.erx.types import MultiViewRecord, char_ngrams_set
 # Multilingual legal corporate suffixes (French, Indian, European, and US forms)
 LEGAL_SUFFIXES_REGEX = (
     r"\b("
-    r"sarl|sas|sasu|eurl|sci|sa|snc|sel|scs|sca|gie|selarl|sem|"
+    r"sarl|sas|sasu|eurl|sci|sa|snc|sel|scs|sca|gie|selarl|sem|scop|"
     r"ltd|limited|pvt|private|corp|corporation|inc|incorporated|"
     r"llc|llp|co|company|gmbh|plc|bv|nv|assoc|associates|group|"
     r"holdings|enterprises|services|solutions|technologies|international|"
@@ -31,7 +31,7 @@ ADDR_ABBREVIATIONS: Dict[str, str] = {
     'blvd': 'boulevard', 'ln': 'lane', 'pkwy': 'parkway', 'hwy': 'highway',
     'ste': 'suite', 'apt': 'apartment', 'fl': 'floor', 'bldg': 'building',
     'ct': 'court', 'pl': 'place', 'sq': 'square', 'terr': 'terrace', 'tr': 'terrace',
-    'cir': 'circle', 'dept': 'department', 'no': 'number', 'opp': 'opposite', 'nr': 'near',
+    'cir': 'circle', 'dept': 'department', 'no': 'number', 'numero': 'number', 'opp': 'opposite', 'nr': 'near',
     # French
     'r': 'rue', 'rue': 'rue', 'bd': 'boulevard', 'bvd': 'boulevard', 'ch': 'chemin',
     'chemin': 'chemin', 'rte': 'route', 'route': 'route', 'imp': 'impasse', 'impasse': 'impasse',
