@@ -105,32 +105,33 @@ def generate_training_shards(
         if not parquet_path.exists():
             raise FileNotFoundError(f"Required normalized partition missing: {parquet_path}")
 
-        table = pq.read_table(parquet_path)
-        total_targets = table.num_rows
+        parquet_file = pq.ParquetFile(parquet_path)
+        total_targets = parquet_file.metadata.num_rows
         total_chunks = (total_targets + chunk_size - 1) // chunk_size
-        logger.info(f"Loaded {total_targets:,} {src_name} targets (Expected: {expected_count:,}) -> {total_chunks} shards.")
+        logger.info(f"Streaming {total_targets:,} {src_name} targets (Expected: {expected_count:,}) -> {total_chunks} shards of {chunk_size:,} rows.")
 
-        ids = table["id"].to_numpy()
-        names_norm = table["name_norm"].to_pylist()
-        names_raw = table["name_raw"].to_pylist()
-        addrs_norm = table["address_norm"].to_pylist()
-        addrs_raw = table["address_raw"].to_pylist()
-        cities_norm = table["city_norm"].to_pylist()
-        states_norm = table["state_norm"].to_pylist()
-        zips_norm = table["postal_code_norm"].to_pylist()
-        countries_norm = table["country_norm"].to_pylist()
-        phones_norm = table["phone_norm"].to_pylist()
-        webs_norm = table["website_norm"].to_pylist()
-
-        for chunk_num, start_idx in enumerate(range(0, total_targets, chunk_size)):
-            end_idx = min(start_idx + chunk_size, total_targets)
+        for chunk_num, batch in enumerate(parquet_file.iter_batches(batch_size=chunk_size)):
             shard_file = shards_dir / f"shard_{shard_idx:03d}.parquet"
             
             if shard_file.exists():
-                logger.info(f"Shard {shard_file.name} already exists. Skipping chunk {chunk_num+1}/{total_chunks} [{start_idx:,} - {end_idx:,}].")
+                logger.info(f"Shard {shard_file.name} already exists. Skipping chunk {chunk_num+1}/{total_chunks}.")
                 shard_paths.append(shard_file)
                 shard_idx += 1
                 continue
+
+            pydict = batch.to_pydict()
+            ids = pydict["id"]
+            names_norm = pydict["name_norm"]
+            names_raw = pydict["name_raw"]
+            addrs_norm = pydict["address_norm"]
+            addrs_raw = pydict["address_raw"]
+            cities_norm = pydict["city_norm"]
+            states_norm = pydict["state_norm"]
+            zips_norm = pydict["postal_code_norm"]
+            countries_norm = pydict["country_norm"]
+            phones_norm = pydict["phone_norm"]
+            webs_norm = pydict["website_norm"]
+            batch_len = len(ids)
 
             batch_tgt_recs: List[EntityRecord] = []
             batch_s1_recs: List[EntityRecord] = []
@@ -138,7 +139,7 @@ def generate_training_shards(
             batch_labels: List[int] = []
 
             pbar = tqdm(
-                range(start_idx, end_idx),
+                range(batch_len),
                 desc=f"Shard {shard_idx:03d} [{src_name} {chunk_num+1}/{total_chunks}]",
                 unit="tgt",
                 ncols=100,
@@ -225,9 +226,6 @@ def generate_training_shards(
                 gc.collect()
 
             shard_idx += 1
-
-        del table
-        gc.collect()
 
     return shard_paths
 

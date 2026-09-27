@@ -57,33 +57,34 @@ def stream_target_source_inference(
     src_name = "Source2" if source_type == SourceType.SOURCE2 else "Source3"
     logger.info(f"Starting streaming inference for {src_name} ({parquet_path})...")
 
-    table = pq.read_table(parquet_path)
-    total_targets = table.num_rows
+    parquet_file = pq.ParquetFile(parquet_path)
+    total_targets = parquet_file.metadata.num_rows
     total_batches = (total_targets + batch_size - 1) // batch_size
-    logger.info(f"Loaded {total_targets:,} target records -> {total_batches} batches.")
-
-    ids = table["id"].to_numpy()
-    names_norm = table["name_norm"].to_pylist()
-    names_raw = table["name_raw"].to_pylist()
-    addrs_norm = table["address_norm"].to_pylist()
-    addrs_raw = table["address_raw"].to_pylist()
-    cities_norm = table["city_norm"].to_pylist()
-    states_norm = table["state_norm"].to_pylist()
-    zips_norm = table["postal_code_norm"].to_pylist()
-    countries_norm = table["country_norm"].to_pylist()
-    phones_norm = table["phone_norm"].to_pylist()
-    webs_norm = table["website_norm"].to_pylist()
+    logger.info(f"Streaming {total_targets:,} target records -> {total_batches} batches of {batch_size:,} rows.")
 
     all_scored_pairs: List[ScoredPair] = []
 
-    for batch_num, i in enumerate(range(0, total_targets, batch_size)):
-        end_idx = min(i + batch_size, total_targets)
+    for batch_num, batch in enumerate(parquet_file.iter_batches(batch_size=batch_size)):
+        pydict = batch.to_pydict()
+        ids = pydict["id"]
+        names_norm = pydict["name_norm"]
+        names_raw = pydict["name_raw"]
+        addrs_norm = pydict["address_norm"]
+        addrs_raw = pydict["address_raw"]
+        cities_norm = pydict["city_norm"]
+        states_norm = pydict["state_norm"]
+        zips_norm = pydict["postal_code_norm"]
+        countries_norm = pydict["country_norm"]
+        phones_norm = pydict["phone_norm"]
+        webs_norm = pydict["website_norm"]
+        batch_len = len(ids)
+
         batch_candidates: List[CandidateMatch] = []
         batch_tgt_recs: List[EntityRecord] = []
         batch_s1_recs: List[EntityRecord] = []
 
         pbar = tqdm(
-            range(i, end_idx),
+            range(batch_len),
             desc=f"Inference [{src_name} {batch_num+1}/{total_batches}]",
             unit="tgt",
             ncols=100,
