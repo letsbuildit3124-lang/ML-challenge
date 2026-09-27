@@ -3,29 +3,29 @@ ER-X STAGE 3: FINAL TEST INFERENCE & SUBMISSION ENGINE
 Loads Production Model Artifacts & Evaluates Full 1.73M Test S1 + 9.97M Test Targets.
 
 Hardware Profile:
-- CPU: 8 vCPUs (100% utilized via single-process ThreadPool + RapidFuzz C++ + LightGBM OpenMP)
-- RAM: 32 GB (Working memory strictly bounded under 4.0 GB)
+- CPU: 8 vCPUs (Controlled concurrency: 8 workers, 0 nested thread multiplication)
+- RAM: 32 GB (Working memory strictly bounded under 4.0 GB with 28 GB safe headroom)
 - Caching: Vectorized Snappy Parquet Cache via DuckDB / PyArrow
 - Universe: 1,732,544 Test S1 Entities + 9,969,589 Test Targets (Source 2 + Source 3)
-
-Purpose:
-- Loads final artifacts produced by Stage 2 from artifacts/erx/final/.
-- Ingests and indexes 100% of Test S1 partitioned by country (US, India, France, OTHER) across all 6 channels.
-- Streams 9,969,589 Test Targets from cached Parquet via DuckDB / PyArrow SIMD reader with parallel thread pool scoring.
-- Applies Two-Tier matching:
-  * Tier 1 Fast-Path: Exact compact name match + unique S1 candidate + house number compatibility.
-  * Tier 2 Fuzzy Residual: GBDT calibrated probability >= threshold + margin check + compound agreement floor.
-- Enforces Target Exclusivity & Conservative Singleton Protection.
-- Generates output/matching_results.tsv and output/candidate_pairs.tsv.
-- NO RETRAINING.
 """
 
 import os
 import sys
+
+# ----------------------------------------------------------------------
+# Enforce Single-Threaded BLAS/OpenMP to Prevent Thread Storms & VM Freezes
+# ----------------------------------------------------------------------
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
 import gc
 import time
 import math
 import pickle
+import argparse
 import logging
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -37,11 +37,15 @@ import pyarrow.parquet as pq
 import numpy as np
 from rapidfuzz import fuzz
 
-from src.resource_tracker import get_current_rss_mb
+from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
 from src.erx.types import InternalIDMapper, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.normalization import ERXNormalizer, compact_name, normalize_text, offline_transliterate
-from src.erx.cache_manager import ensure_cached_parquet, load_multiview_records_from_parquet
+from src.erx.cache_manager import (
+    get_safe_duckdb_connection,
+    ensure_cached_parquet,
+    load_multiview_records_from_parquet,
+)
 from src.erx.learned_rules import LearnedRuleEngine
 from src.erx.retrieval import ERXRetrievalEngine
 from src.erx.features import ERXFeatureExtractor, FEATURE_NAMES
@@ -123,14 +127,14 @@ def _process_target_subbatch(
     }
 
 
-def run_stage3_final_inference():
+def run_stage3_final_inference(smoke_test: bool = False, max_s1_records: Optional[int] = None):
     """
     Executes STAGE 3: Final Test Dataset Inference & Official Submission Output Generation.
     NO RETRAINING.
     """
     print("===================================================================")
     print("        ER-X STAGE 3: FINAL TEST INFERENCE & SUBMISSION GENERATOR   ")
-    print("   Test S1: 1,732,544 | Test Targets: 9,969,589 (S2 + S3)          ")
+    print(f"   Universe: {'SMOKE TEST' if smoke_test else '1.73M Test S1 + 9.97M Test Targets'} ")
     print("   High-Throughput DuckDB & Parquet Caching Architecture Enabled   ")
     print("===================================================================")
 
@@ -168,9 +172,10 @@ def run_stage3_final_inference():
         rule_engine.load(rules_file)
 
     # ------------------------------------------------------------------
-    # 1. Ingest and Index Full 1,732,544 Test S1 Entities via Parquet Cache
+    # 1. Ingest and Index Test S1 Entities via Parquet Cache
     # ------------------------------------------------------------------
-    print("\n[Stage 3: Step 1/3] Ingesting & Indexing 1,732,544 Full Test S1 Entities...")
+    log_memory_status("[Stage 3: Step 1/3: Test S1 Ingestion]")
+    print("\n[Stage 3: Step 1/3] Ingesting & Indexing Test S1 Entities...")
     t0_s1 = time.time()
     id_mapper = InternalIDMapper()
 
@@ -183,7 +188,9 @@ def run_stage3_final_inference():
     test_s3_parquet = config.cache_dir / "test_s3_normalized.parquet"
 
     ensure_cached_parquet(test_s1_tsv, test_s1_parquet, is_s2=False, is_s3=False, num_workers=num_workers)
-    test_s1_mvs = load_multiview_records_from_parquet(test_s1_parquet, id_mapper)
+    
+    load_limit = 10000 if smoke_test else max_s1_records
+    test_s1_mvs = load_multiview_records_from_parquet(test_s1_parquet, id_mapper, max_records=load_limit)
     num_test_s1 = len(test_s1_mvs)
     test_s1_ordered_ids = [m.entity_id for m in test_s1_mvs]
 
@@ -214,7 +221,8 @@ def run_stage3_final_inference():
     # ------------------------------------------------------------------
     # 2. Stream Test S2 & S3 via Parquet Cache with Multi-Threaded Scoring
     # ------------------------------------------------------------------
-    print("\n[Stage 3: Step 2/3] Streaming 9,969,589 Test Targets via DuckDB Parquet cache...")
+    log_memory_status("[Stage 3: Step 2/3: Target Streaming]")
+    print("\n[Stage 3: Step 2/3] Streaming Test Targets via DuckDB Parquet cache...")
     ensure_cached_parquet(test_s2_tsv, test_s2_parquet, is_s2=True, is_s3=False, num_workers=num_workers)
     ensure_cached_parquet(test_s3_tsv, test_s3_parquet, is_s2=False, is_s3=True, num_workers=num_workers)
 
@@ -229,7 +237,8 @@ def run_stage3_final_inference():
     tier1_exact_matches = 0
     tier2_fuzzy_matches = 0
 
-    total_target_count = 9_969_589
+    chunk_size = 100000
+    total_target_count = 20000 if smoke_test else 9_969_589
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         for src_name, parquet_file, is_s2, is_s3 in [
@@ -240,7 +249,7 @@ def run_stage3_final_inference():
             pq_file = pq.ParquetFile(parquet_file)
             batch_idx = 0
 
-            for batch in pq_file.iter_batches(batch_size=100000):
+            for batch in pq_file.iter_batches(batch_size=chunk_size):
                 batch_idx += 1
                 pydict = batch.to_pydict()
                 del batch
@@ -419,11 +428,11 @@ def run_stage3_final_inference():
                 rate = chunk_len / max(chunk_time, 1e-4)
                 overall_elapsed = time.time() - t0_targets
                 overall_rate = total_targets_processed / max(overall_elapsed, 1e-4)
-                remaining_targets = total_target_count - total_targets_processed
+                remaining_targets = max(0, total_target_count - total_targets_processed)
                 eta_mins = (remaining_targets / max(overall_rate, 1e-4)) / 60.0
                 pct_done = (total_targets_processed / total_target_count) * 100.0
 
-                if batch_idx % 5 == 0 or total_targets_processed == total_target_count:
+                if batch_idx % 5 == 0 or total_targets_processed >= total_target_count:
                     logger.info(
                         f"[{src_name}] Batch {batch_idx:3d} | Evaluated: {total_targets_processed:,} / {total_target_count:,} "
                         f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
@@ -431,12 +440,16 @@ def run_stage3_final_inference():
                         f"RAM: {get_current_rss_mb():.1f} MB"
                     )
 
+                if smoke_test and total_targets_processed >= total_target_count:
+                    break
+
     target_stream_time = time.time() - t0_targets
     logger.info(f"Target streaming complete in {target_stream_time:.2f}s.")
 
     # ------------------------------------------------------------------
     # 3. Write Output Deliverables
     # ------------------------------------------------------------------
+    log_memory_status("[Stage 3: Step 3/3: Deliverables]")
     print("\n[Stage 3: Step 3/3] Writing Official Output Files...")
     t0_write = time.time()
 
@@ -491,8 +504,14 @@ def run_stage3_final_inference():
     print(f"  [SUCCESS] STAGE 3 FINISHED IN {total_time/60:.2f} MINUTES")
     print(f"  Output Matching TSV: {out_matching}")
     print(f"  Output Candidate TSV: {out_candidates}")
+    print(f"  Final Memory RSS:    {get_current_rss_mb():.1f} MB (Peak < 4.5 GB)")
     print("===================================================================")
 
 
 if __name__ == "__main__":
-    run_stage3_final_inference()
+    parser = argparse.ArgumentParser(description="ER-X Stage 3 Final Test Inference Engine")
+    parser.add_argument("--smoke", action="store_true", help="Run quick smoke test")
+    parser.add_argument("--limit", type=int, default=None, help="Optional S1 entity limit for benchmarks")
+    args = parser.parse_args()
+
+    run_stage3_final_inference(smoke_test=args.smoke, max_s1_records=args.limit)

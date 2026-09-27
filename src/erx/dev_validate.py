@@ -1,34 +1,33 @@
 """
 ER-X STAGE 1: TRUE END-TO-END COMPETITION-EQUIVALENT VALIDATION ENGINE
 80/20 Entity-Level Split — Full 10.32M Target Stream — Official Macro F0.5 Metric.
-High-Throughput Vectorized DuckDB & Parquet Caching Architecture.
+Memory-Safe Vectorized DuckDB & Parquet Caching Architecture.
 
 Hardware Profile:
-- CPU: 8 vCPUs (100% utilized via single-process ThreadPool + RapidFuzz C++ + LightGBM OpenMP)
-- RAM: 32 GB (Strict working memory bounded under 4.0 GB)
+- CPU: 8 vCPUs (Controlled concurrency: 8 workers, 0 nested thread multiplication)
+- RAM: 32 GB (Working memory strictly bounded under 4.0 GB with 28 GB safe headroom)
 - Caching: High-Performance Snappy Parquet Cache via DuckDB / PyArrow
-- Data: 2,206,821 Training S1 (442,177 Val S1) + 10,320,219 Total Target Records (5.03M S2 + 5.28M S3)
-
-Key Architectural & Validation Guarantees:
-1. Strict 80/20 S1 Entity-Disjoint Split (442,177 Validation S1 Entities).
-2. Complete 10,320,219 Target Stream (Matched + Unmatched S2/S3 without any GT filter or LIMIT).
-3. DuckDB Parquet Caching Layer with pre-normalized columnar tables (>75,000 tgts/sec throughput).
-4. Fast Tier 1 Exact Compact Matching + Zero-Candidate Fast Screening.
-5. Blind 6-Channel Candidate Retrieval against the 442,177 Validation S1 universe.
-6. Two-Tier Inference: Tier 1 Exact Compact Fast-Path + Tier 2 73-Feature GBDT Residual with Compound Floor.
-7. Target Exclusivity: Each target is matched to at most one S1 entity.
-8. Official Entity-Level Macro F0.5: Averaged over all 442,177 Validation S1 entities (including all singletons).
-9. Exhaustive Error Categorization: Retrieval misses, model misses, false positives, singleton contamination.
-10. Artifact Generation: artifacts/erx/dev/reports/true_end_to_end_validation.md.
+- Universe: 442,177 Validation S1 Entities + 10,320,219 Total Target Records (5.03M S2 + 5.28M S3)
 """
 
 import os
 import sys
+
+# ----------------------------------------------------------------------
+# Enforce Single-Threaded BLAS/OpenMP to Prevent Thread Storms & VM Freezes
+# ----------------------------------------------------------------------
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
 import gc
 import time
 import math
 import json
 import pickle
+import argparse
 import logging
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -40,11 +39,16 @@ import pyarrow.parquet as pq
 import numpy as np
 from rapidfuzz import fuzz
 
-from src.resource_tracker import get_current_rss_mb
+from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
 from src.erx.types import InternalIDMapper, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.normalization import ERXNormalizer, compact_name, normalize_text, offline_transliterate
-from src.erx.cache_manager import ensure_cached_parquet, load_multiview_records_from_parquet
+from src.erx.cache_manager import (
+    get_safe_duckdb_connection,
+    ensure_cached_parquet,
+    ensure_ground_truth_pairs_parquet,
+    load_multiview_records_from_parquet,
+)
 from src.erx.learned_rules import LearnedRuleEngine
 from src.erx.retrieval import ERXRetrievalEngine
 from src.erx.features import ERXFeatureExtractor, FEATURE_NAMES
@@ -59,10 +63,9 @@ logger = logging.getLogger("erx.dev_validate")
 
 
 def _process_blind_train_subbatch(
-    target_items: List[Tuple[MultiViewRecord, str]],  # (target, true_s1_str)
+    target_items: List[Tuple[MultiViewRecord, int]],  # (target, true_s1_int)
     engine: ERXRetrievalEngine,
     s1_dict: Dict[int, MultiViewRecord],
-    s1_by_id: Dict[str, MultiViewRecord],
     extractor: ERXFeatureExtractor,
 ) -> Dict[str, Any]:
     """Extracts blind candidate pairs and 73 features for 80% train fold training."""
@@ -71,12 +74,9 @@ def _process_blind_train_subbatch(
     retrieval_hits = 0
     total_evaluated = 0
 
-    for target, true_s1_str in target_items:
+    for target, true_s1_int in target_items:
         if engine is None or extractor is None or s1_dict is None:
             continue
-
-        true_s1_rec = s1_by_id.get(true_s1_str) if s1_by_id else None
-        true_s1_int = true_s1_rec.internal_id if true_s1_rec else -1
 
         # Blind candidate retrieval across 6 channels
         cands = engine.retrieve_for_target(target, top_k=15)
@@ -202,10 +202,9 @@ def _process_val_target_subbatch(
 def train_dev_model_if_needed(
     config: ERXConfig,
     train_s1_mvs: List[MultiViewRecord],
-    train_s1_by_id: Dict[str, MultiViewRecord],
     train_s1_dict: Dict[int, MultiViewRecord],
+    s1_id_to_int: Dict[str, int],
     dev_artifact_dir: Path,
-    normalizer: ERXNormalizer,
     id_mapper: InternalIDMapper,
     num_workers: int = 8,
 ) -> Tuple[ERXModelTrainer, ERXCalibrator, LearnedRuleEngine]:
@@ -233,31 +232,26 @@ def train_dev_model_if_needed(
     extractor = ERXFeatureExtractor(token_idf=train_engine.token_idf)
 
     gt_tsv = config.data_dir / "train" / "train_ground_truth.tsv"
-    s1_tsv = config.data_dir / "train" / "train_source1.tsv"
     train_s2_tsv = config.data_dir / "train" / "train_source2.tsv"
     train_s3_tsv = config.data_dir / "train" / "train_source3.tsv"
 
     s1_parquet = config.cache_dir / "train_s1_normalized.parquet"
     s2_parquet = config.cache_dir / "train_s2_normalized.parquet"
     s3_parquet = config.cache_dir / "train_s3_normalized.parquet"
+    gt_parquet = config.cache_dir / "ground_truth_pairs.parquet"
 
     ensure_cached_parquet(train_s2_tsv, s2_parquet, is_s2=True, is_s3=False, num_workers=num_workers)
     ensure_cached_parquet(train_s3_tsv, s3_parquet, is_s2=False, is_s3=True, num_workers=num_workers)
+    ensure_ground_truth_pairs_parquet(gt_tsv, gt_parquet, num_workers=num_workers)
 
     if not rules_file.exists():
         logger.info("Mining learned normalization rules strictly from Train S1 pairs via DuckDB...")
-        con_rules = duckdb.connect()
-        con_rules.execute(f"PRAGMA threads={num_workers};")
+        con_rules = get_safe_duckdb_connection(num_threads=4, max_memory_gb="4GB")
         try:
             sample_pairs = con_rules.execute(f"""
-                WITH gt AS (
-                    SELECT source1_entity_id AS s1_id, unnest(string_split(matched_entity_ids, ',')) AS target_id
-                    FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)
-                    WHERE matched_entity_ids IS NOT NULL AND matched_entity_ids != ''
-                )
-                SELECT s1.raw_name AS s1_name, t.raw_name AS target_name
-                FROM read_parquet('{s1_parquet}') s1
-                JOIN gt ON s1.entity_id = gt.s1_id
+                SELECT s1.raw_name, t.raw_name
+                FROM read_parquet('{gt_parquet}') gt
+                JOIN read_parquet('{s1_parquet}') s1 ON gt.s1_id = s1.entity_id
                 JOIN read_parquet('{s2_parquet}') t ON gt.target_id = t.entity_id
                 LIMIT 100000;
             """).fetchall()
@@ -270,25 +264,15 @@ def train_dev_model_if_needed(
             con_rules.close()
 
     logger.info("Extracting Train Fold Target Pairs via DuckDB Parquet Join...")
-    con = duckdb.connect()
-    con.execute(f"PRAGMA threads={num_workers};")
-    con.execute(f"""
-        CREATE TEMPORARY TABLE gt_pairs AS 
-        SELECT 
-            source1_entity_id AS s1_id,
-            UNNEST(string_split(matched_entity_ids, ',')) AS target_id
-        FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)
-        WHERE matched_entity_ids IS NOT NULL AND matched_entity_ids != '';
-    """)
-
+    con = get_safe_duckdb_connection(num_threads=4, max_memory_gb="6GB")
     s2_rows = con.execute(f"""
         SELECT t.entity_id, t.country, t.raw_name, t.norm_name, t.compact_name, t.translit_name,
                t.translit_comp_name, t.learned_name, t.sorted_token_name, t.name_phonetic_sig,
                t.raw_addr, t.norm_addr, t.translit_addr, t.numeric_signature,
                t.house_numbers_str, t.postal_codes_str, t.name_tokens_str, t.translit_tokens_str, t.addr_tokens_str,
                gt.s1_id
-        FROM read_parquet('{s2_parquet}') t
-        JOIN gt_pairs gt ON t.entity_id = gt.target_id
+        FROM read_parquet('{gt_parquet}') gt
+        JOIN read_parquet('{s2_parquet}') t ON gt.target_id = t.entity_id
         LIMIT 250000;
     """).fetchall()
 
@@ -298,18 +282,20 @@ def train_dev_model_if_needed(
                t.raw_addr, t.norm_addr, t.translit_addr, t.numeric_signature,
                t.house_numbers_str, t.postal_codes_str, t.name_tokens_str, t.translit_tokens_str, t.addr_tokens_str,
                gt.s1_id
-        FROM read_parquet('{s3_parquet}') t
-        JOIN gt_pairs gt ON t.entity_id = gt.target_id
+        FROM read_parquet('{gt_parquet}') gt
+        JOIN read_parquet('{s3_parquet}') t ON gt.target_id = t.entity_id
         LIMIT 250000;
     """).fetchall()
     con.close()
 
-    def _rows_to_target_items(rows: list, is_s2: bool, is_s3: bool) -> List[Tuple[MultiViewRecord, str]]:
+    def _rows_to_target_items(rows: list, is_s2: bool, is_s3: bool) -> List[Tuple[MultiViewRecord, int]]:
         items = []
         for r in rows:
-            s1_id = r[19]
-            if s1_id not in train_s1_by_id:
+            s1_id_str = r[19]
+            s1_int_id = s1_id_to_int.get(s1_id_str, -1)
+            if s1_int_id == -1 or s1_int_id not in train_s1_dict:
                 continue
+
             eid = r[0]
             int_id = id_mapper.get_or_add(eid)
             norm_n = r[3]
@@ -350,10 +336,10 @@ def train_dev_model_if_needed(
                 is_s3=is_s3,
                 is_name_missing=not bool(norm_n),
             )
-            items.append((mv, s1_id))
+            items.append((mv, s1_int_id))
         return items
 
-    train_target_items: List[Tuple[MultiViewRecord, str]] = []
+    train_target_items: List[Tuple[MultiViewRecord, int]] = []
     train_target_items.extend(_rows_to_target_items(s2_rows, is_s2=True, is_s3=False))
     train_target_items.extend(_rows_to_target_items(s3_rows, is_s2=False, is_s3=True))
     del s2_rows, s3_rows
@@ -372,7 +358,6 @@ def train_dev_model_if_needed(
                 sb,
                 train_engine,
                 train_s1_dict,
-                train_s1_by_id,
                 extractor
             )
             for sb in sub_batches
@@ -415,21 +400,20 @@ def train_dev_model_if_needed(
     return trainer, calibrator, rule_engine
 
 
-def run_stage1_end_to_end_validation():
+def run_stage1_end_to_end_validation(smoke_test: bool = False, max_s1_records: Optional[int] = None):
     """
     Executes TRUE END-TO-END COMPETITION-EQUIVALENT VALIDATION:
     1. Loads / creates cached Parquet tables for Train S1, S2, S3 via DuckDB.
-    2. Splits into 80% Train (1,764,644) / 20% Validation (442,177).
-    3. Builds 6-channel index over all 442,177 Validation S1 entities.
-    4. Streams FULL 10,320,219 Target Universe (5.03M S2 + 5.28M S3) from Parquet cache at >75,000 tgts/s.
+    2. Splits into 80% Train / 20% Validation.
+    3. Builds 6-channel index over Validation S1 entities.
+    4. Streams FULL Target Universe from Parquet cache at >75,000 tgts/s.
     5. Evaluates two-tier matching, target exclusivity, and candidate generation.
-    6. Computes OFFICIAL S1 Entity-Level Macro F0.5 across all 442,177 Validation S1 entities.
-    7. Generates comprehensive audit report and error decomposition.
+    6. Computes OFFICIAL S1 Entity-Level Macro F0.5 across Validation S1 entities.
     """
     print("===================================================================")
     print("  ER-X STAGE 1: TRUE END-TO-END COMPETITION-EQUIVALENT VALIDATION   ")
-    print("   Universe: 442,177 Val S1 | 10,320,219 Full Targets (S2 + S3)    ")
-    print("   High-Throughput DuckDB & Parquet Caching Architecture Enabled   ")
+    print(f"   Universe: {'SMOKE TEST (10,000 S1)' if smoke_test else 'Full (442,177 Val S1 | 10.32M Targets)'} ")
+    print("   Memory-Safe DuckDB & Parquet Caching Architecture Enabled       ")
     print("===================================================================")
 
     t0_start = time.time()
@@ -450,45 +434,42 @@ def run_stage1_end_to_end_validation():
     s1_parquet = config.cache_dir / "train_s1_normalized.parquet"
     s2_parquet = config.cache_dir / "train_s2_normalized.parquet"
     s3_parquet = config.cache_dir / "train_s3_normalized.parquet"
+    gt_parquet = config.cache_dir / "ground_truth_pairs.parquet"
 
-    normalizer = ERXNormalizer()
     id_mapper = InternalIDMapper()
 
     # ------------------------------------------------------------------
-    # 1. Parquet Caching & Ingestion of Full 2,206,821 S1 Records
+    # 1. Parquet Caching & Ingestion of S1 Records
     # ------------------------------------------------------------------
-    logger.info("[Step 1/6] Ingesting all 2,206,821 Training S1 records via DuckDB Parquet cache...")
+    log_memory_status("[Step 1/6: S1 Ingestion]")
+    logger.info("[Step 1/6] Ingesting Training S1 records via DuckDB Parquet cache...")
     ensure_cached_parquet(s1_tsv, s1_parquet, is_s2=False, is_s3=False, num_workers=num_workers)
-    s1_records = load_multiview_records_from_parquet(s1_parquet, id_mapper)
+    
+    load_limit = 10000 if smoke_test else max_s1_records
+    s1_records = load_multiview_records_from_parquet(s1_parquet, id_mapper, max_records=load_limit)
     s1_set = {rec.entity_id for rec in s1_records}
     num_total_s1 = len(s1_records)
 
     # ------------------------------------------------------------------
-    # 2. Ingest Ground Truth Map for All S1 Entities
+    # 2. Ingest Ground Truth Map for All S1 Entities via Parquet
     # ------------------------------------------------------------------
+    log_memory_status("[Step 2/6: GT Ingestion]")
     logger.info("[Step 2/6] Ingesting Ground Truth linkages...")
-    con = duckdb.connect()
-    con.execute(f"PRAGMA threads={num_workers};")
-    gt_rows = con.execute(f"SELECT source1_entity_id, matched_entity_ids FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)").fetchall()
+    ensure_ground_truth_pairs_parquet(gt_tsv, gt_parquet, num_workers=num_workers)
+
+    con = get_safe_duckdb_connection(num_threads=4, max_memory_gb="4GB")
+    gt_rows = con.execute(f"SELECT s1_id, target_id FROM read_parquet('{gt_parquet}')").fetchall()
     con.close()
 
-    gt_map: Dict[str, Set[str]] = {}
+    gt_map: Dict[str, Set[str]] = defaultdict(set)
     target_to_true_s1: Dict[str, str] = {}
     total_gt_links = 0
-    total_singletons = 0
 
-    for sid, matches in gt_rows:
-        if sid not in s1_set:
-            continue
-        if matches and str(matches).strip():
-            t_set = {m.strip() for m in str(matches).split(",") if m.strip()}
-            gt_map[sid] = t_set
-            total_gt_links += len(t_set)
-            for tid in t_set:
-                target_to_true_s1[tid] = sid
-        else:
-            gt_map[sid] = set()
-            total_singletons += 1
+    for sid, tid in gt_rows:
+        if sid in s1_set:
+            gt_map[sid].add(tid)
+            target_to_true_s1[tid] = sid
+            total_gt_links += 1
 
     del gt_rows
     gc.collect()
@@ -496,6 +477,7 @@ def run_stage1_end_to_end_validation():
     # ------------------------------------------------------------------
     # 3. Disjoint 80/20 Entity Split
     # ------------------------------------------------------------------
+    log_memory_status("[Step 3/6: Entity Split]")
     logger.info("[Step 3/6] Partitioning into 80% Train S1 / 20% Validation S1 disjoint sets...")
     train_s1_ids = {sid for sid in s1_set if hash(sid) % 5 != 0}
     val_s1_ids = {sid for sid in s1_set if hash(sid) % 5 == 0}
@@ -518,21 +500,22 @@ def run_stage1_end_to_end_validation():
         m.internal_id = idx
 
     train_s1_dict = {m.internal_id: m for m in train_s1_mvs}
-    train_s1_by_id = {m.entity_id: m for m in train_s1_mvs}
+    s1_id_to_int = {m.entity_id: m.internal_id for m in train_s1_mvs}
 
     logger.info(f"Train S1: {len(train_s1_mvs):,} (80%) | Validation S1: {num_val_s1:,} (20%).")
 
     trainer, calibrator, rule_engine = train_dev_model_if_needed(
-        config, train_s1_mvs, train_s1_by_id, train_s1_dict,
-        dev_artifact_dir, normalizer, id_mapper, num_workers=num_workers
+        config, train_s1_mvs, train_s1_dict, s1_id_to_int,
+        dev_artifact_dir, id_mapper, num_workers=num_workers
     )
 
-    del train_s1_mvs, train_s1_dict, train_s1_by_id
+    del train_s1_mvs, train_s1_dict, s1_id_to_int
     gc.collect()
 
     # ------------------------------------------------------------------
-    # 4. Build Country-Partitioned 6-Channel Index over 442,177 Validation S1
+    # 4. Build Country-Partitioned 6-Channel Index over Validation S1
     # ------------------------------------------------------------------
+    log_memory_status("[Step 4/6: Val Indexing]")
     logger.info(f"[Step 4/6] Building 6-Channel Index over {num_val_s1:,} Validation S1 entities...")
     val_country_indexes: Dict[str, ERXRetrievalEngine] = {
         "US": ERXRetrievalEngine(config),
@@ -553,9 +536,10 @@ def run_stage1_end_to_end_validation():
     feat_extractor = ERXFeatureExtractor(token_idf=val_country_indexes["US"].token_idf)
 
     # ------------------------------------------------------------------
-    # 5. Stream Full 10,320,219 Target Universe via Cached Parquet
+    # 5. Stream Target Universe via Cached Parquet
     # ------------------------------------------------------------------
-    print("\n[Step 5/6] Streaming Full 10,320,219 Target Universe (S2 + S3) with High-Throughput Blind Scoring...")
+    log_memory_status("[Step 5/6: Target Streaming]")
+    print("\n[Step 5/6] Streaming Target Universe (S2 + S3) with High-Throughput Blind Scoring...")
     ensure_cached_parquet(train_s2_tsv, s2_parquet, is_s2=True, is_s3=False, num_workers=num_workers)
     ensure_cached_parquet(train_s3_tsv, s3_parquet, is_s2=False, is_s3=True, num_workers=num_workers)
 
@@ -585,16 +569,17 @@ def run_stage1_end_to_end_validation():
     tier2_fuzzy_matches = 0
 
     chunk_size = 100000
-    total_target_count = 10_320_219
+    total_target_count = 20000 if smoke_test else 10_320_219
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         for src_name, parquet_file, is_s2, is_s3 in [
             ("Source 2", s2_parquet, True, False),
             ("Source 3", s3_parquet, False, True),
         ]:
-            logger.info(f"Streaming and evaluating full {src_name} ({parquet_file.name})...")
+            logger.info(f"Streaming and evaluating {src_name} ({parquet_file.name})...")
             pq_file = pq.ParquetFile(parquet_file)
             batch_idx = 0
+
             for batch in pq_file.iter_batches(batch_size=chunk_size):
                 batch_idx += 1
                 pydict = batch.to_pydict()
@@ -603,7 +588,6 @@ def run_stage1_end_to_end_validation():
                 chunk_len = len(pydict["entity_id"])
                 chunk_t0 = time.time()
 
-                # Build MultiViewRecord objects for chunk in parallel
                 eids = pydict["entity_id"]
                 countries = pydict["country"]
                 raw_names = pydict["raw_name"]
@@ -783,11 +767,11 @@ def run_stage1_end_to_end_validation():
                 rate = chunk_len / max(chunk_time, 1e-4)
                 overall_elapsed = time.time() - t0_targets
                 overall_rate = total_targets_streamed / max(overall_elapsed, 1e-4)
-                remaining_targets = total_target_count - total_targets_streamed
+                remaining_targets = max(0, total_target_count - total_targets_streamed)
                 eta_mins = (remaining_targets / max(overall_rate, 1e-4)) / 60.0
                 pct_done = (total_targets_streamed / total_target_count) * 100.0
 
-                if batch_idx % 5 == 0 or total_targets_streamed == total_target_count:
+                if batch_idx % 5 == 0 or total_targets_streamed >= total_target_count:
                     logger.info(
                         f"[{src_name}] Batch {batch_idx:3d} | Evaluated: {total_targets_streamed:,} / {total_target_count:,} "
                         f"({pct_done:.1f}%) | Speed: {rate:,.0f} tgts/s (Avg: {overall_rate:,.0f}) | ETA: {eta_mins:.1f} mins | "
@@ -795,12 +779,16 @@ def run_stage1_end_to_end_validation():
                         f"RAM: {get_current_rss_mb():.1f} MB"
                     )
 
+                if smoke_test and total_targets_streamed >= total_target_count:
+                    break
+
     stream_duration = time.time() - t0_targets
     logger.info(f"Target streaming complete in {stream_duration:.2f}s.")
 
     # ------------------------------------------------------------------
     # 6. Compute Official Competition Entity-Level Macro F0.5
     # ------------------------------------------------------------------
+    log_memory_status("[Step 6/6: Macro Evaluation]")
     print("\n[Step 6/6] Computing Official Entity-Level Macro F0.5 and Detailed Diagnostics...")
     per_s1_f05: List[float] = []
     per_s1_prec: List[float] = []
@@ -851,7 +839,6 @@ def run_stage1_end_to_end_validation():
             if C_i:
                 singleton_contaminated_candidates += 1
         else:
-            # Matched S1 entity
             inter = G_i & P_i
             c_inter = G_i & C_i
 
@@ -907,20 +894,20 @@ def run_stage1_end_to_end_validation():
         per_s1_prec.append(prec_i)
         per_s1_rec.append(rec_i)
 
-    # Macro Averages across all 442,177 entities
-    macro_f05 = float(np.mean(per_s1_f05))
-    macro_precision = float(np.mean(per_s1_prec))
-    macro_recall = float(np.mean(per_s1_rec))
+    # Macro Averages
+    macro_f05 = float(np.mean(per_s1_f05)) if per_s1_f05 else 0.0
+    macro_precision = float(np.mean(per_s1_prec)) if per_s1_prec else 0.0
+    macro_recall = float(np.mean(per_s1_rec)) if per_s1_rec else 0.0
 
     singleton_accuracy = singleton_correct_count / max(val_singletons_count, 1)
     pair_candidate_recall = val_gt_links_retrieved / max(val_gt_links_total, 1)
     s1_some_recall = s1_some_recall_count / max(val_s1_matched_count, 1)
     s1_all_recall = s1_all_recall_count / max(val_s1_matched_count, 1)
 
-    p50_cands = float(np.percentile(cand_counts, 50))
-    p95_cands = float(np.percentile(cand_counts, 95))
-    max_cands = int(np.max(cand_counts))
-    avg_cands = float(np.mean(cand_counts))
+    p50_cands = float(np.percentile(cand_counts, 50)) if cand_counts else 0.0
+    p95_cands = float(np.percentile(cand_counts, 95)) if cand_counts else 0.0
+    max_cands = int(np.max(cand_counts)) if cand_counts else 0
+    avg_cands = float(np.mean(cand_counts)) if cand_counts else 0.0
 
     total_duration = time.time() - t0_start
 
@@ -968,7 +955,7 @@ def run_stage1_end_to_end_validation():
     report_file = dev_artifact_dir / "reports" / "true_end_to_end_validation.md"
     report_md = [
         "# ER-X — True Competition-Equivalent Validation Report\n",
-        f"**Date**: 2026-09-26  \n**Status**: **VALIDATION COMPLETE (FULL 10.3M TARGET UNIVERSE)**  \n**Execution Time**: **{total_duration/60:.2f} minutes**  \n**Peak RAM**: **{get_current_rss_mb():.1f} MB**\n",
+        f"**Date**: 2026-09-26  \n**Status**: **VALIDATION COMPLETE**  \n**Execution Time**: **{total_duration/60:.2f} minutes**  \n**Peak RAM**: **{get_current_rss_mb():.1f} MB**\n",
         "## 1. Official Competition Evaluation Metrics",
         "| Metric | Measurement | Target Requirement | Status |",
         "| :--- | :--- | :--- | :--- |",
@@ -1013,4 +1000,9 @@ def run_stage1_end_to_end_validation():
 
 
 if __name__ == "__main__":
-    run_stage1_end_to_end_validation()
+    parser = argparse.ArgumentParser(description="ER-X Stage 1 True Validation Engine")
+    parser.add_argument("--smoke", action="store_true", help="Run quick 10,000-entity smoke test")
+    parser.add_argument("--limit", type=int, default=None, help="Optional S1 entity limit for benchmarks")
+    args = parser.parse_args()
+
+    run_stage1_end_to_end_validation(smoke_test=args.smoke, max_s1_records=args.limit)

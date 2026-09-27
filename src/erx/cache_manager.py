@@ -1,12 +1,25 @@
 """
 ER-X High-Performance DuckDB & Parquet Caching Manager.
 Provides:
+- Strict global thread budgeting & OOM safety guards
 - Persistent Parquet normalization cache for S1, S2, S3 (Train & Test)
+- Persistent Ground Truth Pairs Parquet cache (Zero repetitive unnesting)
 - Instantaneous zero-copy columnar ingestion via DuckDB SIMD reader
 - Precomputed MultiViewRecord materialization (< 2s for 2.2M records)
 """
 
 import os
+import sys
+
+# ----------------------------------------------------------------------
+# Enforce Single-Threaded BLAS/OpenMP to Prevent Thread Storms
+# ----------------------------------------------------------------------
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
 import gc
 import time
 import math
@@ -19,12 +32,20 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.resource_tracker import get_current_rss_mb
+from src.resource_tracker import get_current_rss_mb, log_memory_status
 from src.erx.config import ERXConfig
 from src.erx.types import InternalIDMapper, MultiViewRecord, char_ngrams_set
 from src.erx.normalization import ERXNormalizer
 
 logger = logging.getLogger("erx.cache_manager")
+
+
+def get_safe_duckdb_connection(num_threads: int = 4, max_memory_gb: str = "6GB") -> duckdb.DuckDBPyConnection:
+    """Returns a DuckDB connection with strict memory limits and thread budgeting."""
+    con = duckdb.connect()
+    con.execute(f"PRAGMA threads={num_threads};")
+    con.execute(f"PRAGMA max_memory='{max_memory_gb}';")
+    return con
 
 
 def _normalize_raw_tsv_batch(
@@ -110,20 +131,19 @@ def ensure_cached_parquet(
 ) -> Path:
     """Checks if normalized Parquet cache exists. If missing, creates it in parallel via DuckDB/PyArrow."""
     if parquet_path.exists():
-        logger.info(f"Using cached normalized Parquet: {parquet_path.name} ({parquet_path.stat().st_size / (1024*1024):.1f} MB)")
+        logger.info(f"Using cached Parquet: {parquet_path.name} ({parquet_path.stat().st_size / (1024*1024):.1f} MB)")
         return parquet_path
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    logger.info(f"Creating Parquet cache for {tsv_path.name} -> {parquet_path.name}...")
+    logger.info(f"Creating Parquet cache: {tsv_path.name} -> {parquet_path.name}...")
 
-    con = duckdb.connect()
-    con.execute(f"PRAGMA threads={num_workers};")
+    con = get_safe_duckdb_connection(num_threads=min(4, num_workers), max_memory_gb="6GB")
     rows = con.execute(f"SELECT entity_id, business_name, business_address, country FROM read_csv_auto('{tsv_path}', sep='\\t', header=True)").fetchall()
     con.close()
 
     total_rows = len(rows)
-    logger.info(f"Read {total_rows:,} raw rows from {tsv_path.name} in {time.time() - t0:.2f}s. Normalizing in parallel...")
+    logger.info(f"Read {total_rows:,} raw rows from {tsv_path.name} in {time.time() - t0:.2f}s. Normalizing...")
 
     sub_batch_size = max(1, math.ceil(total_rows / num_workers))
     sub_batches = [rows[i : i + sub_batch_size] for i in range(0, total_rows, sub_batch_size)]
@@ -149,7 +169,35 @@ def ensure_cached_parquet(
     del combined_table
     gc.collect()
 
-    logger.info(f"Successfully wrote {parquet_path.name} ({total_rows:,} records) in {time.time() - t0:.2f}s (RAM: {get_current_rss_mb():.1f} MB).")
+    logger.info(f"Successfully cached {parquet_path.name} ({total_rows:,} records) in {time.time() - t0:.2f}s (RAM: {get_current_rss_mb():.1f} MB).")
+    return parquet_path
+
+
+def ensure_ground_truth_pairs_parquet(
+    gt_tsv: Path,
+    parquet_path: Path,
+    num_workers: int = 4,
+) -> Path:
+    """Pre-unnests Ground Truth linkages into a binary Parquet table to eliminate repetitive SQL unnesting overhead."""
+    if parquet_path.exists():
+        return parquet_path
+
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    logger.info(f"Building pre-unnested Ground Truth cache -> {parquet_path.name}...")
+
+    con = get_safe_duckdb_connection(num_threads=num_workers, max_memory_gb="6GB")
+    con.execute(f"""
+        COPY (
+            SELECT 
+                source1_entity_id AS s1_id,
+                UNNEST(string_split(matched_entity_ids, ',')) AS target_id
+            FROM read_csv_auto('{gt_tsv}', sep='\\t', header=True)
+            WHERE matched_entity_ids IS NOT NULL AND matched_entity_ids != ''
+        ) TO '{parquet_path}' (FORMAT 'PARQUET', COMPRESSION 'SNAPPY');
+    """)
+    con.close()
+    logger.info(f"Ground Truth pairs cached in {time.time() - t0:.2f}s -> {parquet_path.name}.")
     return parquet_path
 
 

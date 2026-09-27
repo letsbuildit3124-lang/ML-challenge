@@ -3,6 +3,7 @@ ER-X Dataset-Specific Learned Normalization & Rule Mining.
 Learns:
 - High-purity token aliases and abbreviations from training positive pairs
 - Character confusion and OCR error patterns
+- Streaming incremental aggregation with bounded memory footprint
 - Strict leak-free learning only on training fold entities
 """
 
@@ -10,8 +11,7 @@ import json
 import logging
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional, Any
-import duckdb
+from typing import Dict, List, Set, Tuple, Optional, Any, Iterator
 
 logger = logging.getLogger("erx.learned_rules")
 
@@ -34,17 +34,20 @@ class LearnedRuleEngine:
         self.token_aliases: Dict[str, str] = {}
         self.char_confusions: Dict[str, str] = {}
 
-    def learn_from_pairs(
+    def learn_from_pairs_stream(
         self,
-        pairs: List[Tuple[str, str]],  # (s1_raw_name, target_raw_name)
+        pair_iterator: Iterator[Tuple[str, str]],  # (s1_name, target_name)
+        max_pairs_to_evaluate: int = 100_000,
     ) -> Dict[str, Any]:
-        """Learns token aliases from aligned positive name pairs."""
-        logger.info(f"Mining learned rules from {len(pairs):,} positive pairs...")
+        """Streaming, bounded-memory token alias learning from aligned positive name pairs."""
         alias_obs: Dict[str, Counter] = defaultdict(Counter)
+        pairs_evaluated = 0
 
-        for s1_n, t_n in pairs:
+        for s1_n, t_n in pair_iterator:
             if not s1_n or not t_n:
                 continue
+            pairs_evaluated += 1
+
             s1_toks = set(s1_n.lower().split())
             t_toks = set(t_n.lower().split())
 
@@ -57,6 +60,9 @@ class LearnedRuleEngine:
                 w_t = next(iter(diff_t))
                 if w_s1 != w_t and len(w_s1) >= 2 and len(w_t) >= 2:
                     alias_obs[w_t][w_s1] += 1
+
+            if pairs_evaluated >= max_pairs_to_evaluate:
+                break
 
         # Filter by observation count and purity
         learned_aliases: Dict[str, str] = {}
@@ -89,12 +95,19 @@ class LearnedRuleEngine:
                 learned_aliases[k] = v
 
         self.token_aliases = learned_aliases
-        logger.info(f"Learned {len(self.token_aliases)} high-confidence token aliases.")
+        logger.info(f"Learned {len(self.token_aliases)} high-confidence token aliases from {pairs_evaluated:,} positive pairs.")
 
         return {
             "alias_count": len(self.token_aliases),
             "top_aliases": sorted(alias_stats, key=lambda x: x["count"], reverse=True)[:25]
         }
+
+    def learn_from_pairs(
+        self,
+        pairs: List[Tuple[str, str]],
+    ) -> Dict[str, Any]:
+        """Wrapper for list-based inputs for backwards compatibility."""
+        return self.learn_from_pairs_stream(iter(pairs), max_pairs_to_evaluate=len(pairs))
 
     def save(self, filepath: Path) -> None:
         """Saves learned rules to JSON file."""
