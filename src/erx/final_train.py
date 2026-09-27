@@ -688,49 +688,53 @@ def run_stage2_final_training(
     # Step 6: Train Stage A Model & Execute Second-Pass Hard-Negative Mining
     # ------------------------------------------------------------------
     log_memory_status("[Step 6/6: Model Training]")
-    print("\n[Step 6/6] Consolidating Shards & Training Production LightGBM Engine...")
+    print("\n[Step 6/6] Consolidating Shards & Training Production LightGBM Engine (Memory-Safe Streaming)...")
 
-    # Lazy DuckDB loader / PyArrow loader for consolidated training data
-    logger.info("Loading training dataset from Parquet shards...")
     stage_a_files = sorted(stage_a_shards_dir.glob("*.parquet"))
-    if stage_a_files:
-        arrow_table = pq.read_table(stage_a_files, columns=FEATURE_NAMES + ["label"])
-    else:
-        stage_a_shards_str = str(stage_a_shards_dir).replace("\\", "/")
-        con_train = get_safe_duckdb_connection(num_threads=num_workers, max_memory_gb="6GB")
-        feature_cols = ", ".join(FEATURE_NAMES)
-        train_query = f"""
-            SELECT {feature_cols}, label
-            FROM read_parquet('{stage_a_shards_str}/*.parquet')
-        """
-        arrow_res = con_train.execute(train_query).arrow()
-        arrow_table = arrow_res.read_all() if hasattr(arrow_res, "read_all") else arrow_res
-        con_train.close()
+    logger.info(f"Consolidating {len(stage_a_files)} Parquet shards ({total_shard_pairs:,} total rows) via disk-backed memmap...")
 
-    total_rows = arrow_table.num_rows
-    logger.info(f"Loaded {total_rows:,} verified training pairs into Arrow Table (RAM: {get_current_rss_mb():.1f} MB).")
+    mmap_x_file = stage_a_shards_dir / "consolidated_X.mmap"
+    mmap_y_file = stage_a_shards_dir / "consolidated_y.mmap"
 
-    # Extract numpy views
-    y_all = arrow_table["label"].to_numpy()
-    feature_arrays = [arrow_table[col].to_numpy().astype(np.float32) for col in FEATURE_NAMES]
-    del arrow_table
+    # Pre-allocate disk-backed memory-mapped arrays
+    X_mmap = np.memmap(mmap_x_file, dtype=np.float32, mode="w+", shape=(total_shard_pairs, len(FEATURE_NAMES)))
+    y_mmap = np.memmap(mmap_y_file, dtype=np.int32, mode="w+", shape=(total_shard_pairs,))
+
+    curr_offset = 0
+    t0_cons = time.time()
+
+    for s_idx, sf in enumerate(stage_a_files, 1):
+        tbl = pq.read_table(sf, columns=FEATURE_NAMES + ["label"])
+        s_rows = tbl.num_rows
+        if s_rows == 0:
+            continue
+
+        y_mmap[curr_offset : curr_offset + s_rows] = tbl["label"].to_numpy().astype(np.int32)
+        for f_idx, f_name in enumerate(FEATURE_NAMES):
+            X_mmap[curr_offset : curr_offset + s_rows, f_idx] = tbl[f_name].to_numpy().astype(np.float32)
+
+        curr_offset += s_rows
+        del tbl
+        if s_idx % 20 == 0 or s_idx == len(stage_a_files):
+            X_mmap.flush()
+            y_mmap.flush()
+            gc.collect()
+            logger.info(f"  -> Shards Streamed: {s_idx}/{len(stage_a_files)} ({curr_offset:,} / {total_shard_pairs:,} rows) in {time.time()-t0_cons:.1f}s (RAM: {get_current_rss_mb():.1f} MB)")
+
+    X_mmap.flush()
+    y_mmap.flush()
     gc.collect()
 
-    X_all = np.column_stack(feature_arrays)
-    del feature_arrays
-    gc.collect()
+    logger.info(f"Shards consolidated successfully into memmap: {X_mmap.shape} ({mmap_x_file.stat().st_size / (1024*1024):.1f} MB on disk, RAM: {get_current_rss_mb():.1f} MB).")
 
-    logger.info(f"Assembled Contiguous Feature Matrix: {X_all.shape} ({X_all.nbytes / (1024*1024):.1f} MB).")
+    # 10% Deterministic Internal Validation Split
+    val_mask = (np.arange(total_shard_pairs) % 10 == 0)
+    train_mask = ~val_mask
 
-    # Train/Val Split (10% Internal Validation)
-    val_mask = (np.arange(total_rows) % 10 == 0)
-    X_tr = X_all[~val_mask]
-    y_tr = y_all[~val_mask]
-    X_va = X_all[val_mask]
-    y_va = y_all[val_mask]
-
-    del X_all, y_all
-    gc.collect()
+    X_tr = X_mmap[train_mask]
+    y_tr = y_mmap[train_mask]
+    X_va = X_mmap[val_mask]
+    y_va = y_mmap[val_mask]
 
     config.lgb_params["n_jobs"] = num_workers
     trainer = ERXModelTrainer(config)
@@ -760,8 +764,14 @@ def run_stage2_final_training(
     os.replace(tmp_cal, final_calibrator_path)
     logger.info(f"Saved Verified Final Calibrator to: {final_calibrator_path}")
 
-    del X_tr, y_tr, X_va, y_va, raw_val_probs
+    # Cleanup temporary memmaps after training and calibration
+    del X_tr, y_tr, X_va, y_va, raw_val_probs, X_mmap, y_mmap
     gc.collect()
+    try:
+        mmap_x_file.unlink(missing_ok=True)
+        mmap_y_file.unlink(missing_ok=True)
+    except Exception:
+        pass
 
     total_pipeline_time = time.time() - start_time_all
     print("\n===================================================================")
