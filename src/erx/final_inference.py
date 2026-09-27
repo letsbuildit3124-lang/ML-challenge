@@ -113,17 +113,66 @@ def _process_target_subbatch(
         if not cands:
             continue
 
-        feats = feat_extractor.extract_features_for_target_candidates(target, cands, s1_dict)
         tier2_targets.append(target)
         tier2_cand_lists.append(cands)
-        tier2_features_list.append(feats)
+
+    tier2_features = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+    if tier2_targets:
+        all_s1_ids = []
+        all_t_idx = []
+        all_scores = []
+        all_masks = []
+        all_ranks = []
+        all_best = []
+        all_sec = []
+        all_cnt = []
+        all_c05 = []
+        all_c07 = []
+        all_c08 = []
+
+        for t_idx, (t_rec, cands) in enumerate(zip(tier2_targets, tier2_cand_lists)):
+            c_len = len(cands)
+            b_s = cands[0].retrieval_score
+            sec_s = cands[1].retrieval_score if c_len > 1 else 0.0
+            c05 = sum(1 for c in cands if c.retrieval_score >= 0.5)
+            c07 = sum(1 for c in cands if c.retrieval_score >= 0.7)
+            c08 = sum(1 for c in cands if c.retrieval_score >= 0.8)
+
+            for rank, c in enumerate(cands):
+                all_s1_ids.append(c.s1_internal_id)
+                all_t_idx.append(t_idx)
+                all_scores.append(c.retrieval_score)
+                all_masks.append(c.provenance_mask)
+                all_ranks.append(float(rank))
+                all_best.append(b_s)
+                all_sec.append(sec_s)
+                all_cnt.append(float(c_len))
+                all_c05.append(float(c05))
+                all_c07.append(float(c07))
+                all_c08.append(float(c08))
+
+        cand_data = {
+            "cand_s1_ids": np.array(all_s1_ids, dtype=np.uint32),
+            "cand_target_idx": np.array(all_t_idx, dtype=np.int32),
+            "cand_scores": np.array(all_scores, dtype=np.float32),
+            "cand_prov_masks": np.array(all_masks, dtype=np.uint32),
+            "cand_ranks": np.array(all_ranks, dtype=np.float32),
+            "best_scores": np.array(all_best, dtype=np.float32),
+            "second_best_scores": np.array(all_sec, dtype=np.float32),
+            "cand_counts": np.array(all_cnt, dtype=np.float32),
+            "counts_above_05": np.array(all_c05, dtype=np.float32),
+            "counts_above_07": np.array(all_c07, dtype=np.float32),
+            "counts_above_08": np.array(all_c08, dtype=np.float32),
+            "total_pairs": len(all_s1_ids),
+        }
+        tier2_features = feat_extractor.extract_features_batch(tier2_targets, s1_dict, cand_data)
 
     return {
         "tier1_matches": tier1_matches,
         "tier1_candidates": tier1_candidates,
         "tier2_targets": tier2_targets,
         "tier2_cand_lists": tier2_cand_lists,
-        "tier2_features": np.vstack(tier2_features_list) if tier2_features_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+        "tier2_features": tier2_features,
         "target_count": len(targets),
     }
 

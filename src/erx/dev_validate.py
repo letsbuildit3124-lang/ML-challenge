@@ -69,41 +69,92 @@ def _process_blind_train_subbatch(
     s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
     extractor: ERXFeatureExtractor,
 ) -> Dict[str, Any]:
-    """Extracts blind candidate pairs and 73 features for 80% train fold training."""
-    feats_list = []
+    """Extracts blind candidate pairs and 73 features for 80% train fold training using batched vectorization."""
+    all_s1_ids = []
+    all_t_idx = []
+    all_scores = []
+    all_masks = []
+    all_ranks = []
+    all_best = []
+    all_sec = []
+    all_cnt = []
+    all_c05 = []
+    all_c07 = []
+    all_c08 = []
     labels_list = []
-    retrieval_hits = 0
-    total_evaluated = 0
+    targets_list = []
 
-    for target, true_s1_int in target_items:
+    retrieval_hits = 0
+    total_evaluated = len(target_items)
+
+    for t_idx, (target, true_s1_int) in enumerate(target_items):
         if engine is None or extractor is None or s1_dict is None:
             continue
 
-        # Blind candidate retrieval across 6 channels
         cands = engine.retrieve_for_target(target, top_k=15)
         if not cands:
             continue
 
-        total_evaluated += 1
+        targets_list.append(target)
+        target_local_idx = len(targets_list) - 1
 
-        # Blind 73 feature computation
-        feats = extractor.extract_features_for_target_candidates(target, cands, s1_dict)
+        c_len = len(cands)
+        b_s = cands[0].retrieval_score
+        sec_s = cands[1].retrieval_score if c_len > 1 else 0.0
+        c05 = sum(1 for c in cands if c.retrieval_score >= 0.5)
+        c07 = sum(1 for c in cands if c.retrieval_score >= 0.7)
+        c08 = sum(1 for c in cands if c.retrieval_score >= 0.8)
 
-        # Label assignment strictly after retrieval
         has_hit = False
-        for idx, c in enumerate(cands):
+        for rank, c in enumerate(cands):
             is_pos = (c.s1_internal_id == true_s1_int and true_s1_int != -1)
             if is_pos:
                 has_hit = True
-            feats_list.append(feats[idx])
             labels_list.append(1 if is_pos else 0)
+
+            all_s1_ids.append(c.s1_internal_id)
+            all_t_idx.append(target_local_idx)
+            all_scores.append(c.retrieval_score)
+            all_masks.append(c.provenance_mask)
+            all_ranks.append(float(rank))
+            all_best.append(b_s)
+            all_sec.append(sec_s)
+            all_cnt.append(float(c_len))
+            all_c05.append(float(c05))
+            all_c07.append(float(c07))
+            all_c08.append(float(c08))
 
         if has_hit:
             retrieval_hits += 1
 
+    total_pairs = len(all_s1_ids)
+    if total_pairs == 0:
+        return {
+            "feats": np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+            "labels": np.empty((0,), dtype=np.int32),
+            "hits": 0,
+            "evaluated": total_evaluated,
+        }
+
+    cand_data = {
+        "cand_s1_ids": np.array(all_s1_ids, dtype=np.uint32),
+        "cand_target_idx": np.array(all_t_idx, dtype=np.int32),
+        "cand_scores": np.array(all_scores, dtype=np.float32),
+        "cand_prov_masks": np.array(all_masks, dtype=np.uint32),
+        "cand_ranks": np.array(all_ranks, dtype=np.float32),
+        "best_scores": np.array(all_best, dtype=np.float32),
+        "second_best_scores": np.array(all_sec, dtype=np.float32),
+        "cand_counts": np.array(all_cnt, dtype=np.float32),
+        "counts_above_05": np.array(all_c05, dtype=np.float32),
+        "counts_above_07": np.array(all_c07, dtype=np.float32),
+        "counts_above_08": np.array(all_c08, dtype=np.float32),
+        "total_pairs": total_pairs,
+    }
+    feats_matrix = extractor.extract_features_batch(targets_list, s1_dict, cand_data)
+
     return {
-        "feats": np.array(feats_list, dtype=np.float32) if feats_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
-        "labels": np.array(labels_list, dtype=np.int32) if labels_list else np.empty((0,), dtype=np.int32),
+        "feats": feats_matrix,
+        "labels": np.array(labels_list, dtype=np.int32),
         "hits": retrieval_hits,
         "evaluated": total_evaluated,
     }
@@ -120,15 +171,13 @@ def _process_val_target_subbatch(
     High-Throughput validation target scoring on pre-normalized MultiViewRecord objects:
     1. Instant Tier 1 Exact Compact match check (instant match, 0 feature computation).
     2. Fast zero-candidate screening for non-overlapping targets (0 feature computation).
-    3. 6-Channel candidate retrieval + 73-feature extraction only for candidate-bearing targets.
+    3. 6-Channel candidate retrieval + batched RapidFuzz C-API 73-feature extraction.
     """
     tier1_matches: List[Tuple[int, str]] = []
     tier1_candidates: List[Tuple[int, str]] = []
 
     tier2_targets: List[MultiViewRecord] = []
     tier2_cand_lists: List[List[CandidatePair]] = []
-    tier2_features_list: List[np.ndarray] = []
-
     target_all_retrieved: Dict[str, List[int]] = {}
 
     for target in targets:
@@ -138,24 +187,20 @@ def _process_val_target_subbatch(
         if engine is None:
             continue
 
-        # -------------------------------------------------------------
         # 1. Tier 1 Fast-Path Check: Exact Compact Name
-        # -------------------------------------------------------------
         exact_s1_ids = engine.index_compact_name.get(target.compact_name) if target.compact_name else None
-        if exact_s1_ids and len(exact_s1_ids) == 1:
-            s1_int = exact_s1_ids[0]
+        if exact_s1_ids is not None and len(exact_s1_ids) == 1:
+            s1_int = int(exact_s1_ids[0])
             s1_cand = val_s1_dict.get(s1_int)
             if s1_cand is not None:
                 if not target.house_numbers or not s1_cand.house_numbers or (target.house_numbers & s1_cand.house_numbers):
                     if s1_int < num_val_s1:
                         tier1_matches.append((s1_int, target.entity_id))
                         tier1_candidates.append((s1_int, target.entity_id))
-                        target_all_retrieved[tid] = exact_s1_ids
+                        target_all_retrieved[tid] = [s1_int]
                         continue
 
-        # -------------------------------------------------------------
-        # 2. Fast Zero-Candidate Screening (Zero Set Allocations)
-        # -------------------------------------------------------------
+        # 2. Fast Zero-Candidate Screening
         has_exact = bool(
             (target.compact_name and target.compact_name in engine.index_compact_name)
             or (target.norm_name and target.norm_name in engine.index_norm_name)
@@ -170,9 +215,7 @@ def _process_val_target_subbatch(
             target_all_retrieved[tid] = []
             continue
 
-        # -------------------------------------------------------------
         # 3. Blind 6-Channel Retrieval (Top-15)
-        # -------------------------------------------------------------
         cands = engine.retrieve_for_target(target, top_k=15)
         if not cands:
             target_all_retrieved[tid] = []
@@ -181,20 +224,66 @@ def _process_val_target_subbatch(
         retrieved_s1_ints = [c.s1_internal_id for c in cands]
         target_all_retrieved[tid] = retrieved_s1_ints
 
-        # -------------------------------------------------------------
-        # 4. Tier 2 73-Feature Extraction
-        # -------------------------------------------------------------
-        feats = feat_extractor.extract_features_for_target_candidates(target, cands, val_s1_dict)
         tier2_targets.append(target)
         tier2_cand_lists.append(cands)
-        tier2_features_list.append(feats)
+
+    tier2_features = np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
+    if tier2_targets:
+        all_s1_ids = []
+        all_t_idx = []
+        all_scores = []
+        all_masks = []
+        all_ranks = []
+        all_best = []
+        all_sec = []
+        all_cnt = []
+        all_c05 = []
+        all_c07 = []
+        all_c08 = []
+
+        for t_idx, (t_rec, cands) in enumerate(zip(tier2_targets, tier2_cand_lists)):
+            c_len = len(cands)
+            b_s = cands[0].retrieval_score
+            sec_s = cands[1].retrieval_score if c_len > 1 else 0.0
+            c05 = sum(1 for c in cands if c.retrieval_score >= 0.5)
+            c07 = sum(1 for c in cands if c.retrieval_score >= 0.7)
+            c08 = sum(1 for c in cands if c.retrieval_score >= 0.8)
+
+            for rank, c in enumerate(cands):
+                all_s1_ids.append(c.s1_internal_id)
+                all_t_idx.append(t_idx)
+                all_scores.append(c.retrieval_score)
+                all_masks.append(c.provenance_mask)
+                all_ranks.append(float(rank))
+                all_best.append(b_s)
+                all_sec.append(sec_s)
+                all_cnt.append(float(c_len))
+                all_c05.append(float(c05))
+                all_c07.append(float(c07))
+                all_c08.append(float(c08))
+
+        cand_data = {
+            "cand_s1_ids": np.array(all_s1_ids, dtype=np.uint32),
+            "cand_target_idx": np.array(all_t_idx, dtype=np.int32),
+            "cand_scores": np.array(all_scores, dtype=np.float32),
+            "cand_prov_masks": np.array(all_masks, dtype=np.uint32),
+            "cand_ranks": np.array(all_ranks, dtype=np.float32),
+            "best_scores": np.array(all_best, dtype=np.float32),
+            "second_best_scores": np.array(all_sec, dtype=np.float32),
+            "cand_counts": np.array(all_cnt, dtype=np.float32),
+            "counts_above_05": np.array(all_c05, dtype=np.float32),
+            "counts_above_07": np.array(all_c07, dtype=np.float32),
+            "counts_above_08": np.array(all_c08, dtype=np.float32),
+            "total_pairs": len(all_s1_ids),
+        }
+        tier2_features = feat_extractor.extract_features_batch(tier2_targets, val_s1_dict, cand_data)
 
     return {
         "tier1_matches": tier1_matches,
         "tier1_candidates": tier1_candidates,
         "tier2_targets": tier2_targets,
         "tier2_cand_lists": tier2_cand_lists,
-        "tier2_features": np.vstack(tier2_features_list) if tier2_features_list else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+        "tier2_features": tier2_features,
         "target_all_retrieved": target_all_retrieved,
         "target_count": len(targets),
     }

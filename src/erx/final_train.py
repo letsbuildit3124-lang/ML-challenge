@@ -89,23 +89,29 @@ def _process_blind_chunk_slice(
 ) -> Dict[str, Any]:
     """
     Extracts blind candidates for a slice of target records, joins GT strictly AFTER retrieval,
-    preserves 100% of retrieved positives, and samples high-value diverse hard negatives.
+    preserves 100% of retrieved positives, samples high-value diverse hard negatives,
+    and extracts all 73 features in a single vectorized batch pass.
     """
-    rows_s1_id = []
-    rows_target_id = []
-    rows_label = []
-    rows_prov_mask = []
-    rows_features = []
+    all_s1_ids = []
+    all_target_idx = []
+    all_target_ids = []
+    all_labels = []
+    all_prov_masks = []
+    all_scores = []
+    all_ranks = []
+    all_best_scores = []
+    all_sec_scores = []
+    all_cand_counts = []
+    all_c05 = []
+    all_c07 = []
+    all_c08 = []
 
     positives_count = 0
     negatives_count = 0
     retrieval_hits = 0
-    total_evaluated = 0
+    total_evaluated = len(targets)
 
-    for target in targets:
-        total_evaluated += 1
-
-        # 1. Blind Candidate Retrieval (Zero GT injection)
+    for t_idx, target in enumerate(targets):
         cands = engine.retrieve_for_target(target, top_k=15)
         if not cands:
             continue
@@ -115,7 +121,6 @@ def _process_blind_chunk_slice(
 
         pos_cands = []
         neg_cands = []
-
         for c in cands:
             if c.s1_internal_id == true_s1_int and true_s1_int != -1:
                 pos_cands.append(c)
@@ -125,59 +130,92 @@ def _process_blind_chunk_slice(
         if pos_cands:
             retrieval_hits += 1
 
-        # 2. Hard Negative Selection (Prioritize Diverse Contrastive Negatives)
-        selected_neg_cands = []
+        selected_negs = []
         if neg_cands:
-            # Score negative candidates by hardness:
-            # - Higher retrieval score
-            # - Multi-channel agreement (number of active provenance bits)
-            # - Lexical / phonetic proximity
             scored_negs = []
             for c in neg_cands:
-                num_channels = bin(c.provenance_mask).count("1")
-                hardness_score = c.retrieval_score + (0.15 * num_channels)
-                scored_negs.append((hardness_score, c))
-
+                num_ch = bin(c.provenance_mask).count("1")
+                h_score = c.retrieval_score + (0.15 * num_ch)
+                scored_negs.append((h_score, c))
             scored_negs.sort(key=lambda x: x[0], reverse=True)
-            
-            # Select top K hard negatives
             top_hard = [c for _, c in scored_negs[:hard_neg_budget_per_target]]
-            selected_neg_cands.extend(top_hard)
+            selected_negs.extend(top_hard)
 
-            # Include 1 random/weak negative if available from remaining candidates (10-15% representation)
-            remaining_negs = [c for _, c in scored_negs[hard_neg_budget_per_target:]]
-            if remaining_negs and random.random() < 0.5:
-                selected_neg_cands.append(random.choice(remaining_negs))
+            rem = [c for _, c in scored_negs[hard_neg_budget_per_target:]]
+            if rem and random.random() < 0.5:
+                selected_negs.append(random.choice(rem))
 
-        # 3. Combine 100% Retrieved Positives + Curated Negatives
-        selected_for_target = pos_cands + selected_neg_cands
+        selected_for_target = pos_cands + selected_negs
         if not selected_for_target:
             continue
 
-        # 4. Feature Extraction
-        feats_matrix = extractor.extract_features_for_target_candidates(target, selected_for_target, s1_dict)
+        c_len = len(selected_for_target)
+        b_score = selected_for_target[0].retrieval_score
+        sec_score = selected_for_target[1].retrieval_score if c_len > 1 else 0.0
+        c05 = sum(1 for c in selected_for_target if c.retrieval_score >= 0.5)
+        c07 = sum(1 for c in selected_for_target if c.retrieval_score >= 0.7)
+        c08 = sum(1 for c in selected_for_target if c.retrieval_score >= 0.8)
 
-        for idx, c in enumerate(selected_for_target):
+        for rank, c in enumerate(selected_for_target):
             is_pos = (c.s1_internal_id == true_s1_int and true_s1_int != -1)
             lbl = 1 if is_pos else 0
-            
-            rows_s1_id.append(c.s1_internal_id)
-            rows_target_id.append(target.internal_id)
-            rows_label.append(lbl)
-            rows_prov_mask.append(c.provenance_mask)
-            rows_features.append(feats_matrix[idx])
+
+            all_s1_ids.append(c.s1_internal_id)
+            all_target_idx.append(t_idx)
+            all_target_ids.append(target.internal_id)
+            all_labels.append(lbl)
+            all_prov_masks.append(c.provenance_mask)
+            all_scores.append(c.retrieval_score)
+            all_ranks.append(float(rank))
+            all_best_scores.append(b_score)
+            all_sec_scores.append(sec_score)
+            all_cand_counts.append(float(c_len))
+            all_c05.append(float(c05))
+            all_c07.append(float(c07))
+            all_c08.append(float(c08))
 
             if lbl == 1:
                 positives_count += 1
             else:
                 negatives_count += 1
 
+    total_pairs = len(all_s1_ids)
+    if total_pairs == 0:
+        return {
+            "s1_ids": np.empty((0,), dtype=np.int32),
+            "target_ids": np.empty((0,), dtype=np.int32),
+            "labels": np.empty((0,), dtype=np.int32),
+            "prov_masks": np.empty((0,), dtype=np.int32),
+            "features": np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+            "evaluated": total_evaluated,
+            "hits": retrieval_hits,
+            "positives": 0,
+            "negatives": 0,
+        }
+
+    cand_data = {
+        "cand_s1_ids": np.array(all_s1_ids, dtype=np.uint32),
+        "cand_target_idx": np.array(all_target_idx, dtype=np.int32),
+        "cand_scores": np.array(all_scores, dtype=np.float32),
+        "cand_prov_masks": np.array(all_prov_masks, dtype=np.uint32),
+        "cand_ranks": np.array(all_ranks, dtype=np.float32),
+        "best_scores": np.array(all_best_scores, dtype=np.float32),
+        "second_best_scores": np.array(all_sec_scores, dtype=np.float32),
+        "cand_counts": np.array(all_cand_counts, dtype=np.float32),
+        "counts_above_05": np.array(all_c05, dtype=np.float32),
+        "counts_above_07": np.array(all_c07, dtype=np.float32),
+        "counts_above_08": np.array(all_c08, dtype=np.float32),
+        "total_pairs": total_pairs,
+    }
+
+    feats_matrix = extractor.extract_features_batch(targets, s1_dict, cand_data)
+
     return {
-        "s1_ids": np.array(rows_s1_id, dtype=np.int32) if rows_s1_id else np.empty((0,), dtype=np.int32),
-        "target_ids": np.array(rows_target_id, dtype=np.int32) if rows_target_id else np.empty((0,), dtype=np.int32),
-        "labels": np.array(rows_label, dtype=np.int32) if rows_label else np.empty((0,), dtype=np.int32),
-        "prov_masks": np.array(rows_prov_mask, dtype=np.int32) if rows_prov_mask else np.empty((0,), dtype=np.int32),
-        "features": np.vstack(rows_features) if rows_features else np.empty((0, len(FEATURE_NAMES)), dtype=np.float32),
+        "s1_ids": np.array(all_s1_ids, dtype=np.int32),
+        "target_ids": np.array(all_target_ids, dtype=np.int32),
+        "labels": np.array(all_labels, dtype=np.int32),
+        "prov_masks": np.array(all_prov_masks, dtype=np.int32),
+        "features": feats_matrix,
         "evaluated": total_evaluated,
         "hits": retrieval_hits,
         "positives": positives_count,

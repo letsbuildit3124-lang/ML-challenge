@@ -1,18 +1,19 @@
 """
 ER-X High-Performance Tiered Feature Extraction Engine.
-Features:
-- Tier 0: Structural, exact, missingness, and provenance flags
-- Tier 1: Set-based token Jaccard/Dice, numeric overlaps, difference counts (zero-allocation)
-- Tier 2: Character 3/4/5-gram Dice and Jaccard similarities
-- Tier 3: RapidFuzz C++ Levenshtein, Jaro-Winkler, and token sort metrics
-- Tier 4: Candidate-context relative ranking and margin features
+High-Throughput Vectorized & Batched RapidFuzz C-API Implementation.
+
+Features (73 Total):
+- Group A: Vectorized Integer / Arithmetic / Provenance / Context Features (NumPy)
+- Group B: Batched Token / N-Gram / Exact String Differences
+- Group C: Batched RapidFuzz C-API (process.cpdist with native OpenMP parallel workers)
+- Group D: Vectorized Cross-Field Multi-Channel Interaction Features
 """
 
 import math
 from typing import Dict, List, Set, Tuple, Optional, Any, Union
 import numpy as np
+from rapidfuzz import process, fuzz
 from rapidfuzz.distance import Levenshtein, JaroWinkler
-from rapidfuzz import fuzz
 
 from src.erx.types import MultiViewRecord, CompactS1Record, CandidatePair, ProvenanceMask
 
@@ -108,7 +109,7 @@ FEATURE_NAMES = [
 
 
 class ERXFeatureExtractor:
-    """Computes comprehensive feature vector for a candidate pair with candidate list context."""
+    """Computes comprehensive 73-feature vector for candidate pairs using vectorized and batched C-API operations."""
 
     def __init__(self, token_idf: Optional[Dict[str, float]] = None):
         self.token_idf = token_idf or {}
@@ -117,290 +118,238 @@ class ERXFeatureExtractor:
     def feature_count(self) -> int:
         return len(FEATURE_NAMES)
 
-    def compute_pair_features(
+    def extract_features_batch(
         self,
-        s1: Union[MultiViewRecord, CompactS1Record],
-        target: MultiViewRecord,
-        cand: CandidatePair,
-        context_stats: Dict[str, float]
-    ) -> List[float]:
-        """Extracts all ~73 features for a single (S1, target) candidate pair."""
+        targets: List[MultiViewRecord],
+        s1_dict: Dict[int, Union[MultiViewRecord, CompactS1Record]],
+        cand_data: Dict[str, np.ndarray],
+    ) -> np.ndarray:
+        """
+        High-Throughput Batched Feature Extraction.
+        Computes 73 features for all candidate pairs in a single vectorized pass.
+        Replaces individual Python scalar loops with RapidFuzz C-API batch processing and NumPy arrays.
+        """
+        num_pairs = int(cand_data["total_pairs"])
+        if num_pairs == 0:
+            return np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
 
-        # -------------------------------------------------------------
-        # NAME FEATURES
-        # -------------------------------------------------------------
-        s1_n = s1.norm_name
-        t_n = target.norm_name
+        cand_s1_ids = cand_data["cand_s1_ids"]
+        cand_t_indices = cand_data["cand_target_idx"]
+        cand_scores = cand_data["cand_scores"]
+        cand_prov_masks = cand_data["cand_prov_masks"]
+        cand_ranks = cand_data["cand_ranks"]
 
-        name_raw_exact = 1.0 if s1.raw_name and s1.raw_name == target.raw_name else 0.0
-        name_canonical_exact = 1.0 if s1_n and s1_n == t_n else 0.0
-        name_compact_exact = 1.0 if s1.compact_name and s1.compact_name == target.compact_name else 0.0
-        name_learned_exact = 1.0 if s1.learned_name and s1.learned_name == target.learned_name else 0.0
+        best_scores = cand_data["best_scores"]
+        second_best_scores = cand_data["second_best_scores"]
+        cand_counts = cand_data["cand_counts"]
+        counts_above_05 = cand_data["counts_above_05"]
+        counts_above_07 = cand_data["counts_above_07"]
+        counts_above_08 = cand_data["counts_above_08"]
 
-        len_s1_n = len(s1_n)
-        len_t_n = len(t_n)
-        name_len_diff = float(abs(len_s1_n - len_t_n))
-        name_rel_len_diff = name_len_diff / max(len_s1_n, len_t_n, 1)
-        name_is_missing = 1.0 if s1.is_name_missing or target.is_name_missing else 0.0
+        X = np.zeros((num_pairs, len(FEATURE_NAMES)), dtype=np.float32)
 
-        # Token set metrics (computed once)
-        s1_n_set = s1.name_tok_set
-        t_n_set = target.name_tok_set
-        s1_n_len = len(s1_n_set)
-        t_n_len = len(t_n_set)
-        n_inter = len(s1_n_set & t_n_set)
-        n_union = s1_n_len + t_n_len - n_inter
+        # -----------------------------------------------------------------
+        # Group A: Context & Provenance Features (Vectorized NumPy)
+        # -----------------------------------------------------------------
+        # Candidate Provenance [57:64]
+        pmasks = cand_prov_masks
+        num_ch = np.zeros(num_pairs, dtype=np.float32)
+        for bit in [1, 2, 4, 8, 16, 32]:
+            num_ch += (pmasks & bit != 0).astype(np.float32)
 
-        name_tok_jaccard = (n_inter / n_union) if n_union > 0 else (1.0 if s1_n_len == 0 and t_n_len == 0 else 0.0)
-        name_tok_dice = (2.0 * n_inter / (s1_n_len + t_n_len)) if (s1_n_len + t_n_len) > 0 else 0.0
-        name_tok_overlap_cnt = float(n_inter)
-        name_tok_overlap_ratio = (n_inter / max(s1_n_len, 1)) if s1_n_len > 0 else 0.0
-        name_tokens_missing_cnt = float(len(s1_n_set - t_n_set))
-        name_tokens_extra_cnt = float(len(t_n_set - s1_n_set))
+        X[:, 57] = num_ch
+        X[:, 58] = (pmasks & ProvenanceMask.EXACT_OR_LEARNED != 0).astype(np.float32)
+        X[:, 59] = (pmasks & ProvenanceMask.CHAR_TFIDF != 0).astype(np.float32)
+        X[:, 60] = (pmasks & ProvenanceMask.RARE_TOKEN != 0).astype(np.float32)
+        X[:, 61] = (pmasks & ProvenanceMask.ADDRESS != 0).astype(np.float32)
+        X[:, 62] = (pmasks & ProvenanceMask.PHONETIC != 0).astype(np.float32)
+        X[:, 63] = (pmasks & ProvenanceMask.LEARNED_VARIANT != 0).astype(np.float32)
 
-        name_prefix_equal = 1.0 if (s1_n and t_n and s1_n[:4] == t_n[:4]) else 0.0
+        # Candidate Context [64:73]
+        X[:, 64] = cand_ranks
+        X[:, 65] = cand_scores
+        X[:, 66] = best_scores
+        X[:, 67] = second_best_scores
+        X[:, 68] = best_scores - second_best_scores
+        X[:, 69] = cand_counts
+        X[:, 70] = counts_above_05
+        X[:, 71] = counts_above_07
+        X[:, 72] = counts_above_08
 
-        # RapidFuzz & N-Gram metrics (Fast-path for exact canonical matches)
-        if s1_n and t_n:
-            if s1_n == t_n:
-                name_lev = 1.0
-                name_jw = 1.0
-                name_fuzz_ratio = 1.0
-                name_tok_sort = 1.0
-                name_tok_set = 1.0
-                name_char3_jaccard = 1.0
-                name_char4_jaccard = 1.0
-                name_char5_jaccard = 1.0
-            else:
-                name_lev = Levenshtein.normalized_similarity(s1_n, t_n)
-                name_jw = JaroWinkler.similarity(s1_n, t_n)
-                name_fuzz_ratio = fuzz.ratio(s1_n, t_n) / 100.0
-                name_tok_sort = fuzz.token_sort_ratio(s1_n, t_n) / 100.0
-                name_tok_set = fuzz.token_set_ratio(s1_n, t_n) / 100.0
+        # -----------------------------------------------------------------
+        # Extract Batch String Pairs for C-API & Token Processing
+        # -----------------------------------------------------------------
+        t_norm_names: List[str] = []
+        s1_norm_names: List[str] = []
+        t_norm_addrs: List[str] = []
+        s1_norm_addrs: List[str] = []
 
-                s1_c3 = s1.name_char3_set
-                t_c3 = target.name_char3_set
-                g3_inter = len(s1_c3 & t_c3)
-                g3_union = len(s1_c3 | t_c3)
-                name_char3_jaccard = (g3_inter / g3_union) if g3_union > 0 else 0.0
+        idf_map = self.token_idf
 
-                s1_c4 = s1.name_char4_set
-                t_c4 = target.name_char4_set
-                g4_inter = len(s1_c4 & t_c4)
-                g4_union = len(s1_c4 | t_c4)
-                name_char4_jaccard = (g4_inter / g4_union) if g4_union > 0 else 0.0
+        for p_idx in range(num_pairs):
+            t_idx = int(cand_t_indices[p_idx])
+            s1_int = int(cand_s1_ids[p_idx])
 
-                s1_c5 = s1.name_char5_set
-                t_c5 = target.name_char5_set
-                g5_inter = len(s1_c5 & t_c5)
-                g5_union = len(s1_c5 | t_c5)
-                name_char5_jaccard = (g5_inter / g5_union) if g5_union > 0 else 0.0
-        else:
-            name_lev = 0.0
-            name_jw = 0.0
-            name_fuzz_ratio = 0.0
-            name_tok_sort = 0.0
-            name_tok_set = 0.0
-            name_char3_jaccard = 0.0
-            name_char4_jaccard = 0.0
-            name_char5_jaccard = 0.0
+            target = targets[t_idx]
+            s1 = s1_dict.get(s1_int)
+            if s1 is None:
+                continue
 
-        name_phonetic_match = 1.0 if (s1.name_phonetic_sig and s1.name_phonetic_sig == target.name_phonetic_sig) else 0.0
+            s1_n = s1.norm_name
+            t_n = target.norm_name
+            s1_a = s1.norm_addr
+            t_a = target.norm_addr
 
-        rare_token_overlap = 0.0
-        if self.token_idf and n_inter > 0:
-            shared = s1_n_set & t_n_set
-            rare_token_overlap = sum(self.token_idf.get(t, 0.0) for t in shared)
+            t_norm_names.append(t_n)
+            s1_norm_names.append(s1_n)
+            t_norm_addrs.append(t_a)
+            s1_norm_addrs.append(s1_a)
 
-        # -------------------------------------------------------------
-        # ADDRESS FEATURES
-        # -------------------------------------------------------------
-        s1_a = s1.norm_addr
-        t_a = target.norm_addr
+            # Name Tier 0 Exact & Lengths [0:7]
+            X[p_idx, 0] = 1.0 if s1.raw_name and s1.raw_name == target.raw_name else 0.0
+            X[p_idx, 1] = 1.0 if s1_n and s1_n == t_n else 0.0
+            X[p_idx, 2] = 1.0 if s1.compact_name and s1.compact_name == target.compact_name else 0.0
+            X[p_idx, 3] = 1.0 if s1.learned_name and s1.learned_name == target.learned_name else 0.0
 
-        addr_raw_exact = 1.0 if s1.raw_addr and s1.raw_addr == target.raw_addr else 0.0
-        addr_canonical_exact = 1.0 if s1_a and s1_a == t_a else 0.0
+            len_s1_n = len(s1_n)
+            len_t_n = len(t_n)
+            len_diff_n = abs(len_s1_n - len_t_n)
+            X[p_idx, 4] = float(len_diff_n)
+            X[p_idx, 5] = float(len_diff_n) / max(len_s1_n, len_t_n, 1)
+            X[p_idx, 6] = 1.0 if s1.is_name_missing or target.is_name_missing else 0.0
 
-        len_s1_a = len(s1_a)
-        len_t_a = len(t_a)
-        addr_len_diff = float(abs(len_s1_a - len_t_a))
-        addr_rel_len_diff = addr_len_diff / max(len_s1_a, len_t_a, 1)
-        addr_is_missing = 1.0 if s1.is_addr_missing or target.is_addr_missing else 0.0
+            # Name Tokens [7:14]
+            s1_n_set = s1.name_tok_set
+            t_n_set = target.name_tok_set
+            s1_n_len = len(s1_n_set)
+            t_n_len = len(t_n_set)
+            n_inter = len(s1_n_set & t_n_set)
+            n_union = s1_n_len + t_n_len - n_inter
 
-        s1_a_set = s1.addr_tok_set
-        t_a_set = target.addr_tok_set
-        s1_a_len = len(s1_a_set)
-        t_a_len = len(t_a_set)
-        a_inter = len(s1_a_set & t_a_set)
-        a_union = s1_a_len + t_a_len - a_inter
+            X[p_idx, 7] = (n_inter / n_union) if n_union > 0 else (1.0 if s1_n_len == 0 and t_n_len == 0 else 0.0)
+            X[p_idx, 8] = (2.0 * n_inter / (s1_n_len + t_n_len)) if (s1_n_len + t_n_len) > 0 else 0.0
+            X[p_idx, 9] = float(n_inter)
+            X[p_idx, 10] = (n_inter / max(s1_n_len, 1)) if s1_n_len > 0 else 0.0
+            X[p_idx, 11] = float(len(s1_n_set - t_n_set))
+            X[p_idx, 12] = float(len(t_n_set - s1_n_set))
+            X[p_idx, 13] = 1.0 if (s1_n and t_n and s1_n[:4] == t_n[:4]) else 0.0
 
-        addr_tok_jaccard = (a_inter / a_union) if a_union > 0 else (1.0 if s1_a_len == 0 and t_a_len == 0 else 0.0)
-        addr_tok_dice = (2.0 * a_inter / (s1_a_len + t_a_len)) if (s1_a_len + t_a_len) > 0 else 0.0
-        addr_tok_overlap_cnt = float(a_inter)
-        addr_tok_overlap_ratio = (a_inter / max(s1_a_len, 1)) if s1_a_len > 0 else 0.0
-        addr_tokens_missing_cnt = float(len(s1_a_set - t_a_set))
-        addr_tokens_extra_cnt = float(len(t_a_set - s1_a_set))
+            # Name Character N-Grams & Phonetics [19:24]
+            if s1_n and t_n:
+                if s1_n == t_n:
+                    X[p_idx, 19] = 1.0
+                    X[p_idx, 20] = 1.0
+                    X[p_idx, 21] = 1.0
+                else:
+                    s1_c3 = s1.name_char3_set
+                    t_c3 = target.name_char3_set
+                    g3_i = len(s1_c3 & t_c3)
+                    g3_u = len(s1_c3 | t_c3)
+                    X[p_idx, 19] = (g3_i / g3_u) if g3_u > 0 else 0.0
 
-        # House & numeric overlaps (computed once)
-        s1_h = s1.house_numbers
-        t_h = target.house_numbers
-        num_inter = len(s1_h & t_h)
-        num_union = len(s1_h | t_h)
-        addr_num_overlap_cnt = float(num_inter)
-        addr_num_jaccard = (num_inter / num_union) if num_union > 0 else (1.0 if len(s1_h) == 0 and len(t_h) == 0 else 0.0)
+                    s1_c4 = s1.name_char4_set
+                    t_c4 = target.name_char4_set
+                    g4_i = len(s1_c4 & t_c4)
+                    g4_u = len(s1_c4 | t_c4)
+                    X[p_idx, 20] = (g4_i / g4_u) if g4_u > 0 else 0.0
 
-        addr_number_exact = 1.0 if (s1_h and t_h and s1_h == t_h) else 0.0
-        addr_number_conflict = 1.0 if (s1_h and t_h and not num_inter) else 0.0
+                    s1_c5 = s1.name_char5_set
+                    t_c5 = target.name_char5_set
+                    g5_i = len(s1_c5 & t_c5)
+                    g5_u = len(s1_c5 | t_c5)
+                    X[p_idx, 21] = (g5_i / g5_u) if g5_u > 0 else 0.0
 
-        # Postal overlap
-        s1_p = s1.postal_codes
-        t_p = target.postal_codes
-        addr_postal_exact = 1.0 if (s1_p and t_p and bool(s1_p & t_p)) else 0.0
-        addr_postal_prefix = 0.0
-        if s1_p and t_p:
-            p1 = next(iter(s1_p))
-            p2 = next(iter(t_p))
-            if len(p1) >= 3 and len(p2) >= 3 and p1[:3] == p2[:3]:
-                addr_postal_prefix = 1.0
+            X[p_idx, 22] = 1.0 if (s1.name_phonetic_sig and s1.name_phonetic_sig == target.name_phonetic_sig) else 0.0
 
-        if s1_a and t_a:
-            if s1_a == t_a:
-                addr_lev = 1.0
-                addr_jw = 1.0
-                addr_tok_sort = 1.0
-                addr_tok_set = 1.0
-            else:
-                addr_lev = Levenshtein.normalized_similarity(s1_a, t_a)
-                addr_jw = JaroWinkler.similarity(s1_a, t_a)
-                addr_tok_sort = fuzz.token_sort_ratio(s1_a, t_a) / 100.0
-                addr_tok_set = fuzz.token_set_ratio(s1_a, t_a) / 100.0
-        else:
-            addr_lev = 0.0
-            addr_jw = 0.0
-            addr_tok_sort = 0.0
-            addr_tok_set = 0.0
+            if idf_map and n_inter > 0:
+                shared = s1_n_set & t_n_set
+                X[p_idx, 23] = sum(idf_map.get(t, 0.0) for t in shared)
 
-        # -------------------------------------------------------------
-        # CROSS-FIELD & COUNTRY
-        # -------------------------------------------------------------
-        s1_c = s1.country
-        t_c = target.country
-        country_match = 1.0 if (s1_c and t_c and s1_c == t_c) else 0.0
-        country_is_missing = 1.0 if s1.is_country_missing or target.is_country_missing else 0.0
+            # Address Tier 0 & Tier 1 [24:37]
+            X[p_idx, 24] = 1.0 if s1.raw_addr and s1.raw_addr == target.raw_addr else 0.0
+            X[p_idx, 25] = 1.0 if s1_a and s1_a == t_a else 0.0
+            len_s1_a = len(s1_a)
+            len_t_a = len(t_a)
+            len_diff_a = abs(len_s1_a - len_t_a)
+            X[p_idx, 26] = float(len_diff_a)
+            X[p_idx, 27] = float(len_diff_a) / max(len_s1_a, len_t_a, 1)
+            X[p_idx, 28] = 1.0 if s1.is_addr_missing or target.is_addr_missing else 0.0
 
-        is_s2 = 1.0 if target.is_s2 else 0.0
-        is_s3 = 1.0 if target.is_s3 else 0.0
+            s1_a_set = s1.addr_tok_set
+            t_a_set = target.addr_tok_set
+            s1_a_len = len(s1_a_set)
+            t_a_len = len(t_a_set)
+            a_inter = len(s1_a_set & t_a_set)
+            a_union = s1_a_len + t_a_len - a_inter
 
-        name_addr_sim_prod = name_lev * addr_lev
-        name_addr_sim_mean = (name_lev + addr_lev) / 2.0
-        name_addr_sim_max = max(name_lev, addr_lev)
-        name_addr_sim_weighted = 0.65 * name_lev + 0.35 * addr_lev
+            X[p_idx, 29] = (a_inter / a_union) if a_union > 0 else (1.0 if s1_a_len == 0 and t_a_len == 0 else 0.0)
+            X[p_idx, 30] = (2.0 * a_inter / (s1_a_len + t_a_len)) if (s1_a_len + t_a_len) > 0 else 0.0
+            X[p_idx, 31] = float(a_inter)
+            X[p_idx, 32] = (a_inter / max(s1_a_len, 1)) if s1_a_len > 0 else 0.0
+            X[p_idx, 33] = float(len(s1_a_set - t_a_set))
+            X[p_idx, 34] = float(len(t_a_set - s1_a_set))
 
-        name_strong_addr_strong = 1.0 if (name_lev >= 0.85 and addr_lev >= 0.80) else 0.0
-        name_strong_addr_weak = 1.0 if (name_lev >= 0.85 and addr_lev <= 0.50) else 0.0
-        name_weak_addr_strong = 1.0 if (name_lev <= 0.60 and addr_lev >= 0.80) else 0.0
-        name_weak_addr_weak = 1.0 if (name_lev <= 0.60 and addr_lev <= 0.50) else 0.0
+            s1_h = s1.house_numbers
+            t_h = target.house_numbers
+            num_inter = len(s1_h & t_h)
+            num_union = len(s1_h | t_h)
+            X[p_idx, 35] = float(num_inter)
+            X[p_idx, 36] = (num_inter / num_union) if num_union > 0 else (1.0 if len(s1_h) == 0 and len(t_h) == 0 else 0.0)
 
-        # -------------------------------------------------------------
-        # PROVENANCE MASK BITS
-        # -------------------------------------------------------------
-        pmask = cand.provenance_mask
-        num_channels = float(bin(pmask).count("1"))
-        prov_exact = float((pmask & ProvenanceMask.EXACT_OR_LEARNED) != 0)
-        prov_tfidf = float((pmask & ProvenanceMask.CHAR_TFIDF) != 0)
-        prov_rare = float((pmask & ProvenanceMask.RARE_TOKEN) != 0)
-        prov_addr = float((pmask & ProvenanceMask.ADDRESS) != 0)
-        prov_phon = float((pmask & ProvenanceMask.PHONETIC) != 0)
-        prov_learn = float((pmask & ProvenanceMask.LEARNED_VARIANT) != 0)
+            # Address Numbers & Postal [41:45]
+            X[p_idx, 41] = 1.0 if (s1_h and t_h and s1_h == t_h) else 0.0
+            X[p_idx, 42] = 1.0 if (s1_h and t_h and not num_inter) else 0.0
 
-        # -------------------------------------------------------------
-        # CANDIDATE-CONTEXT FEATURES
-        # -------------------------------------------------------------
-        cand_rank = context_stats.get("candidate_rank", 0.0)
-        ret_score = cand.retrieval_score
-        best_ret = context_stats.get("best_score", ret_score)
-        second_best_ret = context_stats.get("second_best_score", 0.0)
-        cand_margin = best_ret - second_best_ret
-        cand_cnt = context_stats.get("cand_count", 1.0)
-        cnt_05 = context_stats.get("count_above_05", 1.0)
-        cnt_07 = context_stats.get("count_above_07", 1.0)
-        cnt_08 = context_stats.get("count_above_08", 1.0)
+            s1_p = s1.postal_codes
+            t_p = target.postal_codes
+            X[p_idx, 43] = 1.0 if (s1_p and t_p and bool(s1_p & t_p)) else 0.0
+            if s1_p and t_p:
+                p1 = next(iter(s1_p))
+                p2 = next(iter(t_p))
+                if len(p1) >= 3 and len(p2) >= 3 and p1[:3] == p2[:3]:
+                    X[p_idx, 44] = 1.0
 
-        return [
-            name_raw_exact,
-            name_canonical_exact,
-            name_compact_exact,
-            name_learned_exact,
-            name_len_diff,
-            name_rel_len_diff,
-            name_is_missing,
-            name_tok_jaccard,
-            name_tok_dice,
-            name_tok_overlap_cnt,
-            name_tok_overlap_ratio,
-            name_tokens_missing_cnt,
-            name_tokens_extra_cnt,
-            name_prefix_equal,
-            name_lev,
-            name_jw,
-            name_fuzz_ratio,
-            name_tok_sort,
-            name_tok_set,
-            name_char3_jaccard,
-            name_char4_jaccard,
-            name_char5_jaccard,
-            name_phonetic_match,
-            rare_token_overlap,
-            addr_raw_exact,
-            addr_canonical_exact,
-            addr_len_diff,
-            addr_rel_len_diff,
-            addr_is_missing,
-            addr_tok_jaccard,
-            addr_tok_dice,
-            addr_tok_overlap_cnt,
-            addr_tok_overlap_ratio,
-            addr_tokens_missing_cnt,
-            addr_tokens_extra_cnt,
-            addr_num_overlap_cnt,
-            addr_num_jaccard,
-            addr_lev,
-            addr_jw,
-            addr_tok_sort,
-            addr_tok_set,
-            addr_number_exact,
-            addr_number_conflict,
-            addr_postal_exact,
-            addr_postal_prefix,
-            country_match,
-            country_is_missing,
-            is_s2,
-            is_s3,
-            name_addr_sim_prod,
-            name_addr_sim_mean,
-            name_addr_sim_max,
-            name_addr_sim_weighted,
-            name_strong_addr_strong,
-            name_strong_addr_weak,
-            name_weak_addr_strong,
-            name_weak_addr_weak,
-            num_channels,
-            prov_exact,
-            prov_tfidf,
-            prov_rare,
-            prov_addr,
-            prov_phon,
-            prov_learn,
-            cand_rank,
-            ret_score,
-            best_ret,
-            second_best_ret,
-            cand_margin,
-            cand_cnt,
-            cnt_05,
-            cnt_07,
-            cnt_08,
-        ]
+            # Country & Source Flags [45:49]
+            s1_c = s1.country
+            t_c = target.country
+            X[p_idx, 45] = 1.0 if (s1_c and t_c and s1_c == t_c) else 0.0
+            X[p_idx, 46] = 1.0 if s1.is_country_missing or target.is_country_missing else 0.0
+            X[p_idx, 47] = 1.0 if target.is_s2 else 0.0
+            X[p_idx, 48] = 1.0 if target.is_s3 else 0.0
+
+        # -----------------------------------------------------------------
+        # Group C: Batched RapidFuzz C-API Process Processors (process.cpdist)
+        # -----------------------------------------------------------------
+        if t_norm_names and s1_norm_names:
+            # Name RapidFuzz Distances [14:19]
+            X[:, 14] = process.cpdist(t_norm_names, s1_norm_names, scorer=Levenshtein.normalized_similarity, dtype=np.float32)
+            X[:, 15] = process.cpdist(t_norm_names, s1_norm_names, scorer=JaroWinkler.similarity, dtype=np.float32)
+            X[:, 16] = process.cpdist(t_norm_names, s1_norm_names, scorer=fuzz.ratio, dtype=np.float32) / 100.0
+            X[:, 17] = process.cpdist(t_norm_names, s1_norm_names, scorer=fuzz.token_sort_ratio, dtype=np.float32) / 100.0
+            X[:, 18] = process.cpdist(t_norm_names, s1_norm_names, scorer=fuzz.token_set_ratio, dtype=np.float32) / 100.0
+
+            # Address RapidFuzz Distances [37:41]
+            X[:, 37] = process.cpdist(t_norm_addrs, s1_norm_addrs, scorer=Levenshtein.normalized_similarity, dtype=np.float32)
+            X[:, 38] = process.cpdist(t_norm_addrs, s1_norm_addrs, scorer=JaroWinkler.similarity, dtype=np.float32)
+            X[:, 39] = process.cpdist(t_norm_addrs, s1_norm_addrs, scorer=fuzz.token_sort_ratio, dtype=np.float32) / 100.0
+            X[:, 40] = process.cpdist(t_norm_addrs, s1_norm_addrs, scorer=fuzz.token_set_ratio, dtype=np.float32) / 100.0
+
+        # -----------------------------------------------------------------
+        # Group D: Cross-Field Interactions (Vectorized NumPy) [49:57]
+        # -----------------------------------------------------------------
+        name_lev = X[:, 14]
+        addr_lev = X[:, 37]
+
+        X[:, 49] = name_lev * addr_lev
+        X[:, 50] = (name_lev + addr_lev) / 2.0
+        X[:, 51] = np.maximum(name_lev, addr_lev)
+        X[:, 52] = 0.65 * name_lev + 0.35 * addr_lev
+        X[:, 53] = ((name_lev >= 0.85) & (addr_lev >= 0.80)).astype(np.float32)
+        X[:, 54] = ((name_lev >= 0.85) & (addr_lev <= 0.50)).astype(np.float32)
+        X[:, 55] = ((name_lev <= 0.60) & (addr_lev >= 0.80)).astype(np.float32)
+        X[:, 56] = ((name_lev <= 0.60) & (addr_lev <= 0.50)).astype(np.float32)
+
+        return X
 
     def extract_features_for_target_candidates(
         self,
@@ -408,34 +357,23 @@ class ERXFeatureExtractor:
         candidates: List[CandidatePair],
         s1_records: Dict[int, Union[MultiViewRecord, CompactS1Record]]
     ) -> np.ndarray:
-        """Extracts feature matrix (len(candidates), num_features) for all candidate S1s of a target."""
+        """Extracts feature matrix for candidates of a single target record."""
         if not candidates:
             return np.empty((0, len(FEATURE_NAMES)), dtype=np.float32)
 
-        scores = [c.retrieval_score for c in candidates]
-        best_s = scores[0] if scores else 0.0
-        sec_s = scores[1] if len(scores) > 1 else 0.0
-        cand_cnt = float(len(candidates))
-        cnt_05 = float(sum(1 for s in scores if s >= 0.5))
-        cnt_07 = float(sum(1 for s in scores if s >= 0.7))
-        cnt_08 = float(sum(1 for s in scores if s >= 0.8))
-
-        features_list = []
-        for rank, cand in enumerate(candidates):
-            s1 = s1_records.get(cand.s1_internal_id)
-            if s1 is None:
-                continue
-
-            ctx = {
-                "candidate_rank": float(rank),
-                "best_score": best_s,
-                "second_best_score": sec_s,
-                "cand_count": cand_cnt,
-                "count_above_05": cnt_05,
-                "count_above_07": cnt_07,
-                "count_above_08": cnt_08,
-            }
-            row = self.compute_pair_features(s1, target, cand, ctx)
-            features_list.append(row)
-
-        return np.array(features_list, dtype=np.float32)
+        cand_len = len(candidates)
+        cand_data = {
+            "cand_s1_ids": np.array([c.s1_internal_id for c in candidates], dtype=np.uint32),
+            "cand_target_idx": np.zeros(cand_len, dtype=np.int32),
+            "cand_scores": np.array([c.retrieval_score for c in candidates], dtype=np.float32),
+            "cand_prov_masks": np.array([c.provenance_mask for c in candidates], dtype=np.uint32),
+            "cand_ranks": np.arange(cand_len, dtype=np.float32),
+            "best_scores": np.full(cand_len, candidates[0].retrieval_score, dtype=np.float32),
+            "second_best_scores": np.full(cand_len, candidates[1].retrieval_score if cand_len > 1 else 0.0, dtype=np.float32),
+            "cand_counts": np.full(cand_len, float(cand_len), dtype=np.float32),
+            "counts_above_05": np.full(cand_len, float(sum(1 for c in candidates if c.retrieval_score >= 0.5)), dtype=np.float32),
+            "counts_above_07": np.full(cand_len, float(sum(1 for c in candidates if c.retrieval_score >= 0.7)), dtype=np.float32),
+            "counts_above_08": np.full(cand_len, float(sum(1 for c in candidates if c.retrieval_score >= 0.8)), dtype=np.float32),
+            "total_pairs": cand_len,
+        }
+        return self.extract_features_batch([target], s1_records, cand_data)
