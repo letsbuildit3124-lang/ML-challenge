@@ -36,6 +36,7 @@ import duckdb
 import numpy as np
 
 from src.resource_tracker import get_current_rss_mb
+from src.erx.config import ERXConfig
 from src.erx.types import InternalIDMapper, MultiViewRecord, CandidatePair, ProvenanceMask, char_ngrams_set
 from src.erx.normalization import ERXNormalizer, compact_name, normalize_text, offline_transliterate
 from src.erx.cache_manager import ensure_cached_parquet, load_multiview_records_from_parquet
