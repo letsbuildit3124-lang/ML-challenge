@@ -4,7 +4,6 @@ Provides:
 - Persistent Parquet normalization cache for S1, S2, S3 (Train & Test)
 - Instantaneous zero-copy columnar ingestion via DuckDB SIMD reader
 - Precomputed MultiViewRecord materialization (< 2s for 2.2M records)
-- DuckDB SQL Tier 1 Exact Compact Matching & Screening Accelerator
 """
 
 import os
@@ -23,18 +22,7 @@ import pyarrow.parquet as pq
 from src.resource_tracker import get_current_rss_mb
 from src.erx.config import ERXConfig
 from src.erx.types import InternalIDMapper, MultiViewRecord, char_ngrams_set
-from src.erx.normalization import (
-    ERXNormalizer,
-    compact_name,
-    normalize_text,
-    normalize_address,
-    offline_transliterate,
-    compute_soundex,
-    compute_consonant_skeleton,
-    extract_house_numbers,
-    extract_postal_codes,
-    extract_numeric_signature,
-)
+from src.erx.normalization import ERXNormalizer
 
 logger = logging.getLogger("erx.cache_manager")
 
@@ -45,6 +33,7 @@ def _normalize_raw_tsv_batch(
     is_s3: bool = False,
 ) -> Dict[str, List[Any]]:
     """Parallel worker for initial one-time TSV normalization before Parquet caching."""
+    normalizer = ERXNormalizer()
     entity_ids = []
     countries = []
     raw_names = []
@@ -67,51 +56,27 @@ def _normalize_raw_tsv_batch(
 
     for r in rows:
         eid, b_name, b_addr, country = r[0], r[1] or "", r[2] or "", r[3] or ""
-        
-        # 1. Name views
-        norm_n = normalize_text(b_name)
-        comp_n = compact_name(b_name)
-        translit_n = offline_transliterate(norm_n)
-        translit_comp_n = compact_name(translit_n) if translit_n else ""
-        learned_n = norm_n  # learned rule placeholder
-        
-        n_toks = norm_n.split() if norm_n else []
-        t_toks = translit_n.split() if translit_n else []
-        sorted_tok_n = " ".join(sorted(n_toks)) if len(n_toks) > 1 else ""
-        
-        # Phonetic signature
-        phon_sig = ""
-        if n_toks:
-            first_tok = n_toks[0]
-            phon_sig = f"{compute_soundex(first_tok)}:{compute_consonant_skeleton(first_tok)}"
-            
-        # 2. Address views
-        norm_a = normalize_address(b_addr)
-        translit_a = offline_transliterate(norm_a)
-        num_sig = extract_numeric_signature(b_addr)
-        hn_set = extract_house_numbers(b_addr)
-        pc_set = extract_postal_codes(b_addr)
-        a_toks = norm_a.split() if norm_a else []
+        rec = normalizer.normalize_record(0, eid, b_name, b_addr, country, is_s2=is_s2, is_s3=is_s3)
 
-        entity_ids.append(eid)
-        countries.append(country)
-        raw_names.append(b_name)
-        norm_names.append(norm_n)
-        compact_names.append(comp_n)
-        translit_names.append(translit_n)
-        translit_comp_names.append(translit_comp_n)
-        learned_names.append(learned_n)
-        sorted_token_names.append(sorted_tok_n)
-        name_phonetic_sigs.append(phon_sig)
-        raw_addrs.append(b_addr)
-        norm_addrs.append(norm_a)
-        translit_addrs.append(translit_a)
-        numeric_signatures.append(num_sig)
-        house_numbers_strs.append(" ".join(hn_set))
-        postal_codes_strs.append(" ".join(pc_set))
-        name_tokens_strs.append(" ".join(n_toks))
-        translit_tokens_strs.append(" ".join(t_toks))
-        addr_tokens_strs.append(" ".join(a_toks))
+        entity_ids.append(rec.entity_id)
+        countries.append(rec.country)
+        raw_names.append(rec.raw_name)
+        norm_names.append(rec.norm_name)
+        compact_names.append(rec.compact_name)
+        translit_names.append(rec.translit_name)
+        translit_comp_names.append(rec.translit_comp_name)
+        learned_names.append(rec.learned_name)
+        sorted_token_names.append(rec.sorted_token_name)
+        name_phonetic_sigs.append(rec.name_phonetic_sig)
+        raw_addrs.append(rec.raw_addr)
+        norm_addrs.append(rec.norm_addr)
+        translit_addrs.append(rec.translit_addr)
+        numeric_signatures.append(rec.numeric_signature)
+        house_numbers_strs.append(" ".join(rec.house_numbers))
+        postal_codes_strs.append(" ".join(rec.postal_codes))
+        name_tokens_strs.append(" ".join(rec.name_tokens))
+        translit_tokens_strs.append(" ".join(rec.translit_tokens))
+        addr_tokens_strs.append(" ".join(rec.addr_tokens))
 
     return {
         "entity_id": entity_ids,
