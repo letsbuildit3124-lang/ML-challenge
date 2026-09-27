@@ -85,35 +85,41 @@ def extract_pair_features(
     feats[11] = 1.0 if tgt_rec.website_norm and s1_rec.website_norm and (tgt_rec.website_norm in s1_rec.website_norm or s1_rec.website_norm in tgt_rec.website_norm) else 0.0
 
     # 2. N-Gram Overlap & Dice Similarities (16) (Using pre-cached sets)
-    tgt_ng2 = tgt_rec.ngrams_2 if tgt_rec.ngrams_2 else extract_ngrams(tgt_rec.name_norm, 2)
-    s1_ng2 = s1_rec.ngrams_2 if s1_rec.ngrams_2 else extract_ngrams(s1_rec.name_norm, 2)
-    tgt_ng3 = tgt_rec.ngrams_3 if tgt_rec.ngrams_3 else extract_ngrams(tgt_rec.name_norm, 3)
-    s1_ng3 = s1_rec.ngrams_3 if s1_rec.ngrams_3 else extract_ngrams(s1_rec.name_norm, 3)
-    tgt_ng4 = tgt_rec.ngrams_4 if tgt_rec.ngrams_4 else extract_ngrams(tgt_rec.name_norm, 4)
-    s1_ng4 = s1_rec.ngrams_4 if s1_rec.ngrams_4 else extract_ngrams(s1_rec.name_norm, 4)
+    if same_name_norm:
+        feats[12:18] = 1.0
+    else:
+        tgt_ng2 = tgt_rec.ngrams_2 if tgt_rec.ngrams_2 else extract_ngrams(tgt_rec.name_norm, 2)
+        s1_ng2 = s1_rec.ngrams_2 if s1_rec.ngrams_2 else extract_ngrams(s1_rec.name_norm, 2)
+        tgt_ng3 = tgt_rec.ngrams_3 if tgt_rec.ngrams_3 else extract_ngrams(tgt_rec.name_norm, 3)
+        s1_ng3 = s1_rec.ngrams_3 if s1_rec.ngrams_3 else extract_ngrams(s1_rec.name_norm, 3)
+        tgt_ng4 = tgt_rec.ngrams_4 if tgt_rec.ngrams_4 else extract_ngrams(tgt_rec.name_norm, 4)
+        s1_ng4 = s1_rec.ngrams_4 if s1_rec.ngrams_4 else extract_ngrams(s1_rec.name_norm, 4)
 
-    feats[12] = compute_jaccard_similarity(tgt_ng2, s1_ng2)
-    feats[13] = compute_dice_similarity(tgt_ng2, s1_ng2)
-    feats[14] = compute_jaccard_similarity(tgt_ng3, s1_ng3)
-    feats[15] = compute_dice_similarity(tgt_ng3, s1_ng3)
-    feats[16] = compute_jaccard_similarity(tgt_ng4, s1_ng4)
-    feats[17] = compute_dice_similarity(tgt_ng4, s1_ng4)
+        feats[12] = compute_jaccard_similarity(tgt_ng2, s1_ng2)
+        feats[13] = compute_dice_similarity(tgt_ng2, s1_ng2)
+        feats[14] = compute_jaccard_similarity(tgt_ng3, s1_ng3)
+        feats[15] = compute_dice_similarity(tgt_ng3, s1_ng3)
+        feats[16] = compute_jaccard_similarity(tgt_ng4, s1_ng4)
+        feats[17] = compute_dice_similarity(tgt_ng4, s1_ng4)
 
     # Address n-grams
-    tgt_addr_ng3 = tgt_rec.addr_ngrams_3 if tgt_rec.addr_ngrams_3 else extract_ngrams(tgt_rec.address_norm, 3)
-    s1_addr_ng3 = s1_rec.addr_ngrams_3 if s1_rec.addr_ngrams_3 else extract_ngrams(s1_rec.address_norm, 3)
-    feats[18] = compute_jaccard_similarity(tgt_addr_ng3, s1_addr_ng3)
-    feats[19] = compute_dice_similarity(tgt_addr_ng3, s1_addr_ng3)
+    if same_addr_norm:
+        feats[18:20] = 1.0
+    else:
+        tgt_addr_ng3 = tgt_rec.addr_ngrams_3 if tgt_rec.addr_ngrams_3 else extract_ngrams(tgt_rec.address_norm, 3)
+        s1_addr_ng3 = s1_rec.addr_ngrams_3 if s1_rec.addr_ngrams_3 else extract_ngrams(s1_rec.address_norm, 3)
+        feats[18] = compute_jaccard_similarity(tgt_addr_ng3, s1_addr_ng3)
+        feats[19] = compute_dice_similarity(tgt_addr_ng3, s1_addr_ng3)
 
     # Character stats
     len1 = len(tgt_rec.name_norm)
     len2 = len(s1_rec.name_norm)
-    feats[20] = abs(len1 - len2)
-    feats[21] = min(len1, len2) / max(len1, len2, 1)
-    feats[22] = abs(len(tgt_rec.address_norm) - len(s1_rec.address_norm))
-    feats[23] = min(len(tgt_rec.address_norm), len(s1_rec.address_norm)) / max(len(tgt_rec.address_norm), len(s1_rec.address_norm), 1)
-    feats[24] = 1.0 if tgt_rec.name_norm and s1_rec.name_norm and tgt_rec.name_norm[0] == s1_rec.name_norm[0] else 0.0
-    feats[25] = 1.0 if tgt_rec.name_norm and s1_rec.name_norm and tgt_rec.name_norm[-1] == s1_rec.name_norm[-1] else 0.0
+    feats[20] = 0.0 if same_name_norm else abs(len1 - len2)
+    feats[21] = 1.0 if same_name_norm else (min(len1, len2) / max(len1, len2, 1))
+    feats[22] = 0.0 if same_addr_norm else abs(len(tgt_rec.address_norm) - len(s1_rec.address_norm))
+    feats[23] = 1.0 if same_addr_norm else (min(len(tgt_rec.address_norm), len(s1_rec.address_norm)) / max(len(tgt_rec.address_norm), len(s1_rec.address_norm), 1))
+    feats[24] = 1.0 if (same_name_norm or (tgt_rec.name_norm and s1_rec.name_norm and tgt_rec.name_norm[0] == s1_rec.name_norm[0])) else 0.0
+    feats[25] = 1.0 if (same_name_norm or (tgt_rec.name_norm and s1_rec.name_norm and tgt_rec.name_norm[-1] == s1_rec.name_norm[-1])) else 0.0
     feats[26] = 1.0 if tgt_rec.postal_code_norm and s1_rec.postal_code_norm and tgt_rec.postal_code_norm[:2] == s1_rec.postal_code_norm[:2] else 0.0
     feats[27] = 1.0 if tgt_rec.phone_norm and s1_rec.phone_norm and tgt_rec.phone_norm[-4:] == s1_rec.phone_norm[-4:] else 0.0
 
@@ -145,8 +151,11 @@ def extract_pair_features(
 
         # Raw names
         if tgt_rec.name_raw and s1_rec.name_raw:
-            feats[34] = fuzz.ratio(tgt_rec.name_raw, s1_rec.name_raw) / 100.0
-            feats[35] = fuzz.token_sort_ratio(tgt_rec.name_raw, s1_rec.name_raw) / 100.0
+            if tgt_rec.name_raw == s1_rec.name_raw:
+                feats[34:36] = 1.0
+            else:
+                feats[34] = fuzz.ratio(tgt_rec.name_raw, s1_rec.name_raw) / 100.0
+                feats[35] = fuzz.token_sort_ratio(tgt_rec.name_raw, s1_rec.name_raw) / 100.0
 
         # Address fuzzy
         if same_addr_norm:
@@ -169,23 +178,43 @@ def extract_pair_features(
         feats[47] = (fuzz.ratio(tgt_rec.website_norm, s1_rec.website_norm) / 100.0) if (tgt_rec.website_norm and s1_rec.website_norm) else 0.0
 
     # 4. Token Set & Overlap Statistics (12) (Using pre-cached sets)
-    toks1 = tgt_rec.name_tokens_set if tgt_rec.name_tokens_set else set(tgt_rec.name_norm.split())
-    toks2 = s1_rec.name_tokens_set if s1_rec.name_tokens_set else set(s1_rec.name_norm.split())
-    feats[48] = len(toks1)
-    feats[49] = len(toks2)
-    feats[50] = len(toks1 & toks2)
-    feats[51] = compute_jaccard_similarity(toks1, toks2)
-    feats[52] = compute_dice_similarity(toks1, toks2)
-    feats[53] = len(toks1 - toks2)
-    feats[54] = len(toks2 - toks1)
+    if same_name_norm:
+        toks1 = tgt_rec.name_tokens_set if tgt_rec.name_tokens_set else set(tgt_rec.name_norm.split())
+        feats[48] = len(toks1)
+        feats[49] = len(toks1)
+        feats[50] = len(toks1)
+        feats[51] = 1.0
+        feats[52] = 1.0
+        feats[53] = 0.0
+        feats[54] = 0.0
+        feats[57] = 1.0
+        feats[58] = 1.0
+        feats[59] = 1.0
+        feats[63] = 1.0
+        feats[64] = 1.0
+    else:
+        toks1 = tgt_rec.name_tokens_set if tgt_rec.name_tokens_set else set(tgt_rec.name_norm.split())
+        toks2 = s1_rec.name_tokens_set if s1_rec.name_tokens_set else set(s1_rec.name_norm.split())
+        feats[48] = len(toks1)
+        feats[49] = len(toks2)
+        feats[50] = len(toks1 & toks2)
+        feats[51] = compute_jaccard_similarity(toks1, toks2)
+        feats[52] = compute_dice_similarity(toks1, toks2)
+        feats[53] = len(toks1 - toks2)
+        feats[54] = len(toks2 - toks1)
+        feats[57] = 1.0 if (toks1 and toks2 and list(toks1)[0] == list(toks2)[0]) else 0.0
+        feats[58] = 1.0 if (toks1 and toks2 and list(toks1)[-1] == list(toks2)[-1]) else 0.0
+        feats[59] = 1.0 if (toks1.issubset(toks2) or toks2.issubset(toks1)) and (toks1 and toks2) else 0.0
+
+        ph1 = tgt_rec.phonetic_set if tgt_rec.phonetic_set else {compute_soundex(t) for t in toks1 if t}
+        ph2 = s1_rec.phonetic_set if s1_rec.phonetic_set else {compute_soundex(t) for t in toks2 if t}
+        feats[63] = compute_jaccard_similarity(ph1, ph2)
+        feats[64] = 1.0 if ph1 and ph2 and len(ph1 & ph2) > 0 else 0.0
 
     addr_toks1 = tgt_rec.address_tokens_set if tgt_rec.address_tokens_set else set(tgt_rec.address_norm.split())
     addr_toks2 = s1_rec.address_tokens_set if s1_rec.address_tokens_set else set(s1_rec.address_norm.split())
     feats[55] = len(addr_toks1 & addr_toks2)
-    feats[56] = compute_jaccard_similarity(addr_toks1, addr_toks2)
-    feats[57] = 1.0 if (toks1 and toks2 and list(toks1)[0] == list(toks2)[0]) else 0.0
-    feats[58] = 1.0 if (toks1 and toks2 and list(toks1)[-1] == list(toks2)[-1]) else 0.0
-    feats[59] = 1.0 if (toks1.issubset(toks2) or toks2.issubset(toks1)) and (toks1 and toks2) else 0.0
+    feats[56] = 1.0 if same_addr_norm else compute_jaccard_similarity(addr_toks1, addr_toks2)
 
     # 5. Geographic, Numeric & Phonetic Alignment (8)
     num1 = tgt_rec.numeric_tokens_set if tgt_rec.numeric_tokens_set else {t for t in addr_toks1 if t.isdigit()}
@@ -194,10 +223,6 @@ def extract_pair_features(
     feats[61] = 1.0 if num1 and num2 and len(num1 & num2) > 0 else 0.0
     feats[62] = 1.0 if num1 and num2 and len(num1 & num2) == 0 else 0.0
     
-    ph1 = tgt_rec.phonetic_set if tgt_rec.phonetic_set else {compute_soundex(t) for t in toks1 if t}
-    ph2 = s1_rec.phonetic_set if s1_rec.phonetic_set else {compute_soundex(t) for t in toks2 if t}
-    feats[63] = compute_jaccard_similarity(ph1, ph2)
-    feats[64] = 1.0 if ph1 and ph2 and len(ph1 & ph2) > 0 else 0.0
     feats[65] = 1.0 if tgt_rec.city_norm and s1_rec.city_norm and tgt_rec.city_norm == s1_rec.city_norm else 0.0
     feats[66] = 1.0 if tgt_rec.state_norm and s1_rec.state_norm and tgt_rec.state_norm == s1_rec.state_norm else 0.0
     feats[67] = 1.0 if tgt_rec.postal_code_norm and s1_rec.postal_code_norm and tgt_rec.postal_code_norm == s1_rec.postal_code_norm else 0.0
