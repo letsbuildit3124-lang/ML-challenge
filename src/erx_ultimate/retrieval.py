@@ -95,6 +95,7 @@ class ERXRetrievalEngine:
     def __init__(self, config: UltimateConfig = CONFIG):
         self.config = config
         self.indices_dir = Path(config.paths.cache_dir) / "indices"
+        self.indices_dir.mkdir(parents=True, exist_ok=True)
         self.channels: Dict[str, CSRChannelIndex] = {}
         self.s1_id_map: Optional[np.ndarray] = None  # Array mapping internal doc_idx -> s1_id
 

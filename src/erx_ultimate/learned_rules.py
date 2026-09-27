@@ -39,7 +39,7 @@ class LearnedRulesEngine:
         """
         Extract frequent token aliases from ground truth pairs in training set.
         Streams the entire ground truth universe chunk-by-chunk with zero truncation.
-        Supports both Source 2 and Source 3 links.
+        Supports both Source 2 and Source 3 links by joining against normalized parquet files.
         """
         logger.info("Extracting learned aliases and typo patterns from COMPLETE training ground truth...")
         conn = duckdb.connect(db_path, read_only=True)
@@ -48,49 +48,56 @@ class LearnedRulesEngine:
             token_pairs: Counter = Counter()
             self.total_gt_processed = 0
 
-            # Scan Source 2 links
+            norm_dir = Path(self.config.paths.cache_dir) / "normalized"
+            s1_pq = (norm_dir / "train_s1.parquet").as_posix()
+            s2_pq = (norm_dir / "train_s2.parquet").as_posix()
+            s3_pq = (norm_dir / "train_s3.parquet").as_posix()
+
             filter_clause = f"AND ({s1_fold_filter_sql})" if s1_fold_filter_sql else ""
             
-            s2_query = f"""
-                SELECT 
-                    s1.name_norm AS s1_name,
-                    s2.name_norm AS target_name
-                FROM train_ground_truth gt
-                JOIN train_s1 s1 ON gt.source1_id = s1.id
-                JOIN train_s2 s2 ON gt.target_id = s2.id AND gt.target_source = 2
-                WHERE s1.name_norm != '' AND s2.name_norm != '' AND s1.name_norm != s2.name_norm
-                {filter_clause};
-            """
-            cursor_s2 = conn.cursor()
-            cursor_s2.execute(s2_query)
-            while True:
-                rows = cursor_s2.fetchmany(chunk_size)
-                if not rows:
-                    break
-                self.total_gt_processed += len(rows)
-                for s1_name, tgt_name in rows:
-                    self._mine_tokens_from_pair(s1_name, tgt_name, token_pairs)
+            # Scan Source 2 links
+            if Path(s1_pq).exists() and Path(s2_pq).exists():
+                s2_query = f"""
+                    SELECT 
+                        s1.name_norm AS s1_name,
+                        s2.name_norm AS target_name
+                    FROM train_ground_truth gt
+                    JOIN read_parquet('{s1_pq}') s1 ON gt.source1_id = s1.id
+                    JOIN read_parquet('{s2_pq}') s2 ON gt.target_id = s2.id AND gt.target_source = 2
+                    WHERE s1.name_norm != '' AND s2.name_norm != '' AND s1.name_norm != s2.name_norm
+                    {filter_clause};
+                """
+                cursor_s2 = conn.cursor()
+                cursor_s2.execute(s2_query)
+                while True:
+                    rows = cursor_s2.fetchmany(chunk_size)
+                    if not rows:
+                        break
+                    self.total_gt_processed += len(rows)
+                    for s1_name, tgt_name in rows:
+                        self._mine_tokens_from_pair(s1_name, tgt_name, token_pairs)
 
             # Scan Source 3 links
-            s3_query = f"""
-                SELECT 
-                    s1.name_norm AS s1_name,
-                    s3.name_norm AS target_name
-                FROM train_ground_truth gt
-                JOIN train_s1 s1 ON gt.source1_id = s1.id
-                JOIN train_s3 s3 ON gt.target_id = s3.id AND gt.target_source = 3
-                WHERE s1.name_norm != '' AND s3.name_norm != '' AND s1.name_norm != s3.name_norm
-                {filter_clause};
-            """
-            cursor_s3 = conn.cursor()
-            cursor_s3.execute(s3_query)
-            while True:
-                rows = cursor_s3.fetchmany(chunk_size)
-                if not rows:
-                    break
-                self.total_gt_processed += len(rows)
-                for s1_name, tgt_name in rows:
-                    self._mine_tokens_from_pair(s1_name, tgt_name, token_pairs)
+            if Path(s1_pq).exists() and Path(s3_pq).exists():
+                s3_query = f"""
+                    SELECT 
+                        s1.name_norm AS s1_name,
+                        s3.name_norm AS target_name
+                    FROM train_ground_truth gt
+                    JOIN read_parquet('{s1_pq}') s1 ON gt.source1_id = s1.id
+                    JOIN read_parquet('{s3_pq}') s3 ON gt.target_id = s3.id AND gt.target_source = 3
+                    WHERE s1.name_norm != '' AND s3.name_norm != '' AND s1.name_norm != s3.name_norm
+                    {filter_clause};
+                """
+                cursor_s3 = conn.cursor()
+                cursor_s3.execute(s3_query)
+                while True:
+                    rows = cursor_s3.fetchmany(chunk_size)
+                    if not rows:
+                        break
+                    self.total_gt_processed += len(rows)
+                    for s1_name, tgt_name in rows:
+                        self._mine_tokens_from_pair(s1_name, tgt_name, token_pairs)
 
             self.unique_links_processed = len(token_pairs)
             self.token_substitutions = {}
