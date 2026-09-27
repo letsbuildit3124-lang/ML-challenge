@@ -29,11 +29,51 @@ from src.erx_ultimate.features import extract_batch_features, NUM_FEATURES
 from src.erx_ultimate.model import ERXModelEngine
 from src.erx_ultimate.postprocessing import PostProcessingEngine
 
+class SimpleProgressBar:
+    """Zero-dependency progress bar fallback when tqdm is not installed."""
+    def __init__(self, iterable=None, total=None, desc="", unit="it", ncols=80, leave=True):
+        self.iterable = iterable if iterable is not None else range(total or 0)
+        self.total = total or (len(iterable) if hasattr(iterable, "__len__") else 0)
+        self.desc = desc
+        self.unit = unit
+        self.leave = leave
+        self.count = 0
+        self.start_time = time.time()
+        self.last_print = 0.0
+
+    def __iter__(self):
+        for item in self.iterable:
+            yield item
+            self.update(1)
+
+    def update(self, n=1):
+        self.count += n
+        now = time.time()
+        if now - self.last_print >= 2.0 or self.count >= self.total:
+            self.last_print = now
+            elapsed = now - self.start_time
+            rate = self.count / elapsed if elapsed > 0 else 0
+            pct = (self.count / self.total * 100) if self.total > 0 else 0
+            eta = (self.total - self.count) / rate if rate > 0 else 0
+            sys.stdout.write(f"\r{self.desc}: {self.count:,}/{self.total:,} [{pct:.1f}%] ({rate:.1f} {self.unit}/s, ETA: {eta:.0f}s)")
+            sys.stdout.flush()
+
+    def set_postfix(self, postfix_dict=None):
+        pass
+
+    def close(self):
+        if self.count >= self.total:
+            now = time.time()
+            elapsed = now - self.start_time
+            rate = self.count / elapsed if elapsed > 0 else 0
+            sys.stdout.write(f"\r{self.desc}: {self.count:,}/{self.total:,} [100.0%] ({rate:.1f} {self.unit}/s in {elapsed:.1f}s)\n")
+            sys.stdout.flush()
+
+
 try:
     from tqdm import tqdm
 except ImportError:
-    def tqdm(iterable, *args, **kwargs):
-        return iterable
+    tqdm = SimpleProgressBar
 
 logging.basicConfig(
     level=logging.INFO,
